@@ -161,7 +161,8 @@ final class FileSystemService {
             var dest = destination.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: dest.path) {
                 if replaceNames.contains(name) {
-                    try? FileManager.default.removeItem(at: dest)
+                    // 替换时旧项进废纸篓而非永久删除，用户误触可恢复
+                    try? FileManager.default.trashItem(at: dest, resultingItemURL: nil)
                 } else if renameConflicts {
                     dest = nextAvailableName(for: url, in: destination)
                 } else {

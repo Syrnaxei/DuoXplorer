@@ -26,20 +26,29 @@ struct FileItem: Identifiable, Equatable {
         self.fileExtension = url.pathExtension
     }
 
+    // DateFormatter/ByteCountFormatter 创建开销大，列表每行每帧都会调用，必须缓存复用；
+    // 仅在主线程（视图渲染）使用
+    @MainActor private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f
+    }()
+    @MainActor private static let byteFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .file
+        return f
+    }()
+
     /// 格式化文件大小
-    var formattedSize: String {
+    @MainActor var formattedSize: String {
         guard let size = size, !isDirectory else { return "--" }
-        let formatter = ByteCountFormatter()
-        formatter.countStyle = .file
-        return formatter.string(fromByteCount: size)
+        return Self.byteFormatter.string(fromByteCount: size)
     }
 
     /// 格式化修改日期
-    var formattedDate: String {
+    @MainActor var formattedDate: String {
         guard let date = modificationDate else { return "--" }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm"
-        return formatter.string(from: date)
+        return Self.dateFormatter.string(from: date)
     }
 
     /// 文件类型描述
