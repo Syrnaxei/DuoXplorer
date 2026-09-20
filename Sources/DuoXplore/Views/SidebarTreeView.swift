@@ -53,8 +53,9 @@ struct SidebarTreeNodeRow: View {
                             .frame(width: 12, height: 12)
                     }
                 }
-                .contentShape(Rectangle())
                 .padding(.vertical, 3)
+                .padding(.horizontal, 10)
+                .contentShape(Rectangle())
                 .onTapGesture { onSelect(node.url) }
                 .task {
                     await node.loadChildren()
@@ -74,9 +75,10 @@ struct SidebarTreeNodeRow: View {
                             Text(node.name)
                                 .font(.system(size: 13))
                         }
+                        .padding(.vertical, 3)
+                        .padding(.horizontal, 10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
-                        .padding(.vertical, 3)
                         .onTapGesture { onSelect(node.url) }
                     }
                 )
@@ -88,11 +90,15 @@ struct SidebarTreeNodeRow: View {
                     Text(node.name)
                         .font(.system(size: 13))
                 }
-                .contentShape(Rectangle())
                 .padding(.vertical, 3)
+                .padding(.horizontal, 10)
+                .contentShape(Rectangle())
                 .onTapGesture { onSelect(node.url) }
             }
         }
+        // 行内边距清零，让内容（含点击区）铺满整行，与 listRowBackground 高亮范围一致；
+        // 原有边距用行内 padding(.horizontal, 10) 补偿
+        .listRowInsets(EdgeInsets())
         .listRowBackground(rowHighlight)
     }
 }
