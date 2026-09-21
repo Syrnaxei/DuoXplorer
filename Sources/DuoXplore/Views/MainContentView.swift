@@ -47,38 +47,6 @@ struct MainContentView: View {
 
             Divider()
 
-            // 工具栏：搜索
-            HStack(spacing: 8) {
-                // 搜索框
-                HStack(spacing: 4) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.secondary)
-                        .font(.system(size: 12))
-                    TextField("搜索...", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                    if !searchText.isEmpty {
-                        Button(action: { searchText = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color(nsColor: .textBackgroundColor))
-                .cornerRadius(6)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.3)))
-
-                Spacer()
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-
-            Divider()
-
             // 文件列表
             if isLoading {
                 Spacer()
@@ -115,6 +83,7 @@ struct MainContentView: View {
         .onChange(of: showHiddenFiles) { loadFiles() }
         .onAppear { loadFiles() }
         .onChange(of: currentURL) { startWatcher() }
+        .searchable(text: $searchText, placement: .toolbar, prompt: "搜索")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: {
@@ -149,13 +118,6 @@ struct MainContentView: View {
                 }
                 .disabled(currentURL.path == "/")
                 .help("向上一层")
-            }
-
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: { loadFiles() }) {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .help("刷新")
             }
         }
     }
@@ -262,6 +224,4 @@ struct MainContentView: View {
         source.resume()
         watcherSource = source
     }
-
-    func refresh() { loadFiles() }
 }

@@ -40,6 +40,11 @@ struct BreadcrumbBar: View {
         }
         .frame(height: 28)
         .background(Color(nsColor: .controlBackgroundColor))
+        .onChange(of: isFocused) { _, focused in
+            // 失焦 = 提交跳转并回到面包屑态（Esc 走 onExitCommand 取消，不触发提交）
+            guard !focused, isEditing else { return }
+            commitOnBlur()
+        }
     }
 
     // MARK: - 编辑模式
@@ -60,21 +65,29 @@ struct BreadcrumbBar: View {
                     isFocused = true
                     // 自动全选文本，方便复制
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        guard isFocused, isEditing else { return }
                         NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
                     }
                 }
-            Button {
-                cancelEdit()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("取消 (Esc)")
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+    }
+
+    /// 失焦提交：路径有效则跳转，无效（或为空）则直接退出编辑态
+    private func commitOnBlur() {
+        let raw = editPath.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { cancelEdit(); return }
+        var path = (raw as NSString).expandingTildeInPath
+        if !path.hasPrefix("/") {
+            path = currentURL.path + "/" + path
+        }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) {
+            onNavigate(isDir.boolValue ? url : url.deletingLastPathComponent())
+        }
+        cancelEdit()
     }
 
     private func commitEdit() {

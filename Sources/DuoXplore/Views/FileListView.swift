@@ -82,6 +82,8 @@ struct FileListView: View {
                     selectedURLs: $selectedURLs,
                     cutURLs: cutURLs,
                     renameTarget: renameTarget,
+                    currentURL: currentURL,
+                    fsService: fsService,
                     onOpen: { file in
                         if file.isDirectory { onNavigate(file.url) }
                         else { fsService.openFile(file.url) }
@@ -95,6 +97,7 @@ struct FileListView: View {
                             commitRename()
                         }
                     },
+                    onRefresh: onRefresh,
                     menuItems: menuItems
                 )
                 .onAppear { installKeyboardMonitor() }
@@ -327,9 +330,12 @@ struct FileListTableView: NSViewRepresentable {
     @Binding var selectedURLs: Set<URL>
     let cutURLs: Set<URL>
     let renameTarget: URL?
+    let currentURL: URL
+    let fsService: FileSystemService
     let onOpen: (FileItem) -> Void
     let onSelection: (Set<URL>) -> Void
     let onRenameEnd: (String, Bool) -> Void
+    let onRefresh: () -> Void
     let menuItems: (FileItem?) -> [FileMenuItem]
 
     private static let nameCellID = NSUserInterfaceItemIdentifier("FileListNameCell")
@@ -339,9 +345,12 @@ struct FileListTableView: NSViewRepresentable {
         Coordinator(
             files: files,
             cutURLs: cutURLs,
+            currentURL: currentURL,
+            fsService: fsService,
             onOpen: onOpen,
             onSelection: onSelection,
             onRenameEnd: onRenameEnd,
+            onRefresh: onRefresh,
             menuItems: menuItems
         )
     }
@@ -356,6 +365,7 @@ struct FileListTableView: NSViewRepresentable {
         table.allowsMultipleSelection = true
         table.allowsColumnReordering = false
         table.allowsColumnResizing = false
+        table.registerForDraggedTypes([.fileURL])
         table.setAccessibilityIdentifier("FileList")
 
         let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
@@ -376,6 +386,7 @@ struct FileListTableView: NSViewRepresentable {
         table.addTableColumn(size)
 
         let coordinator = context.coordinator
+        coordinator.table = table
         table.dataSource = coordinator
         table.delegate = coordinator
         table.target = coordinator
@@ -384,7 +395,6 @@ struct FileListTableView: NSViewRepresentable {
             coordinator?.menu(forRow: row)
         }
         table.reloadData()
-        coordinator.table = table
 
         let scrollView = NSScrollView()
         scrollView.documentView = table
@@ -399,7 +409,10 @@ struct FileListTableView: NSViewRepresentable {
         coordinator.onOpen = onOpen
         coordinator.onSelection = onSelection
         coordinator.onRenameEnd = onRenameEnd
+        coordinator.onRefresh = onRefresh
         coordinator.menuItems = menuItems
+        coordinator.currentURL = currentURL
+        coordinator.fsService = fsService
 
         let key = files.map { $0.url.path }.joined(separator: "|")
         if key != coordinator.filesKey {
@@ -422,9 +435,12 @@ struct FileListTableView: NSViewRepresentable {
     @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSControlTextEditingDelegate {
         var files: [FileItem]
         var cutURLs: Set<URL>
+        var currentURL: URL
+        var fsService: FileSystemService
         var onOpen: (FileItem) -> Void
         var onSelection: (Set<URL>) -> Void
         var onRenameEnd: (String, Bool) -> Void
+        var onRefresh: () -> Void
         var menuItems: (FileItem?) -> [FileMenuItem]
         weak var table: NSTableView?
         var filesKey = ""
@@ -432,14 +448,18 @@ struct FileListTableView: NSViewRepresentable {
         var renameRow: Int?
         var isSyncingSelection = false
 
-        init(files: [FileItem], cutURLs: Set<URL>, onOpen: @escaping (FileItem) -> Void,
-             onSelection: @escaping (Set<URL>) -> Void, onRenameEnd: @escaping (String, Bool) -> Void,
+        init(files: [FileItem], cutURLs: Set<URL>, currentURL: URL, fsService: FileSystemService,
+             onOpen: @escaping (FileItem) -> Void, onSelection: @escaping (Set<URL>) -> Void,
+             onRenameEnd: @escaping (String, Bool) -> Void, onRefresh: @escaping () -> Void,
              menuItems: @escaping (FileItem?) -> [FileMenuItem]) {
             self.files = files
             self.cutURLs = cutURLs
+            self.currentURL = currentURL
+            self.fsService = fsService
             self.onOpen = onOpen
             self.onSelection = onSelection
             self.onRenameEnd = onRenameEnd
+            self.onRefresh = onRefresh
             self.menuItems = menuItems
         }
 
@@ -602,6 +622,77 @@ struct FileListTableView: NSViewRepresentable {
             renameRow = nil
             let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap(NSTextMovement.init(rawValue:))
             onRenameEnd(textField.stringValue, movement == .cancel)
+        }
+
+        // MARK: 拖放
+
+        // 拖出行：把行 URL 写入拖拽剪贴板，Finder 等外部应用即可接收
+        func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+            row >= 0 && row < files.count ? files[row].url as NSURL : nil
+        }
+
+        // 接收方自行决定移动/复制，来源声明两者即可
+        func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession,
+                       sourceOperationMaskForDraggingContext context: NSDraggingContext) -> NSDragOperation {
+            [.copy, .move]
+        }
+
+        private func draggedFileURLs(from info: NSDraggingInfo) -> [URL]? {
+            info.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self],
+                options: [.urlReadingFileURLsOnly: true]
+            ) as? [URL]
+        }
+
+        /// 拖放目标：目录行上悬停 = 拖入该文件夹，其余 = 拖入当前目录；
+        /// 所有拖拽项都已在目标文件夹内（拖回原文件夹）时返回 nil = 无操作
+        private func dropDestination(_ info: NSDraggingInfo, row: Int, operation: NSTableView.DropOperation) -> URL? {
+            let urls = draggedFileURLs(from: info) ?? []
+            guard !urls.isEmpty else { return nil }
+            let dest: URL
+            if operation == .on, row >= 0, row < files.count,
+               files[row].isDirectory, !urls.contains(files[row].url) {
+                dest = files[row].url
+            } else {
+                dest = currentURL
+            }
+            let destPath = dest.standardizedFileURL.path
+            guard urls.contains(where: {
+                $0.deletingLastPathComponent().standardizedFileURL.path != destPath
+            }) else { return nil }
+            return dest
+        }
+
+        func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
+                       proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
+            guard let dest = dropDestination(info, row: row, operation: operation) else { return [] }
+            if operation == .on, row >= 0, row < files.count,
+               files[row].isDirectory, dest == files[row].url {
+                tableView.setDropRow(row, dropOperation: .on)
+            } else {
+                tableView.setDropRow(-1, dropOperation: .on)
+            }
+            // 应用内拖动默认移动（⌥ 复制），外部（Finder）默认复制（⌥ 移动）
+            let wanted: NSDragOperation = (info.draggingSource != nil) != NSEvent.modifierFlags.contains(.option) ? .move : .copy
+            let op = wanted.intersection(info.draggingSourceOperationMask)
+            return op.isEmpty ? info.draggingSourceOperationMask.intersection(.copy) : op
+        }
+
+        func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
+                       row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+            guard let urls = draggedFileURLs(from: info), !urls.isEmpty,
+                  let destination = dropDestination(info, row: row, operation: dropOperation) else { return false }
+            // 不能把文件夹拖进它自己的子目录
+            let destPath = destination.standardizedFileURL.path
+            let movable = urls.filter {
+                $0.deletingLastPathComponent().standardizedFileURL.path != destPath
+                    && !destination.path.hasPrefix($0.path + "/")
+            }
+            guard !movable.isEmpty else { return false }
+            let isMove = (info.draggingSource != nil) != NSEvent.modifierFlags.contains(.option)
+            fsService.pasteItems(movable, to: destination, isCut: isMove)
+            onRefresh()
+            return true
         }
 
         // MARK: 右键菜单
