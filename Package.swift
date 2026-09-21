@@ -13,6 +13,10 @@ let package = Package(
             resources: [
                 .copy("../../AppIcon.icns")
             ]
-        )
+        ),
+        .testTarget(
+            name: "DuoXploreTests",
+            dependencies: ["DuoXplore"]
+        ),
     ]
 )

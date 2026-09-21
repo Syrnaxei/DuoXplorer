@@ -626,15 +626,9 @@ struct FileListTableView: NSViewRepresentable {
 
         // MARK: 拖放
 
-        // 拖出行：把行 URL 写入拖拽剪贴板，Finder 等外部应用即可接收
+        // 拖出行：为行提供 URL writer 以发起拖拽；数据由 FileTable.beginDraggingSession 立即写入粘贴板
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
             row >= 0 && row < files.count ? files[row].url as NSURL : nil
-        }
-
-        // 接收方自行决定移动/复制，来源声明两者即可
-        func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession,
-                       sourceOperationMaskForDraggingContext context: NSDraggingContext) -> NSDragOperation {
-            [.copy, .move]
         }
 
         private func draggedFileURLs(from info: NSDraggingInfo) -> [URL]? {
@@ -645,52 +639,43 @@ struct FileListTableView: NSViewRepresentable {
         }
 
         /// 拖放目标：目录行上悬停 = 拖入该文件夹，其余 = 拖入当前目录；
-        /// 所有拖拽项都已在目标文件夹内（拖回原文件夹）时返回 nil = 无操作
-        private func dropDestination(_ info: NSDraggingInfo, row: Int, operation: NSTableView.DropOperation) -> URL? {
-            let urls = draggedFileURLs(from: info) ?? []
-            guard !urls.isEmpty else { return nil }
-            let dest: URL
+        /// 过滤无效项后为空（拖回原文件夹、拖进自己的子目录）时返回 nil = 无操作
+        private func dropTarget(_ info: NSDraggingInfo, row: Int, operation: NSTableView.DropOperation) -> (urls: [URL], destination: URL, folderRow: Int?)? {
+            guard let urls = draggedFileURLs(from: info), !urls.isEmpty else { return nil }
+            let destination: URL
+            let folderRow: Int?
             if operation == .on, row >= 0, row < files.count,
                files[row].isDirectory, !urls.contains(files[row].url) {
-                dest = files[row].url
+                destination = files[row].url
+                folderRow = row
             } else {
-                dest = currentURL
+                destination = currentURL
+                folderRow = nil
             }
-            let destPath = dest.standardizedFileURL.path
-            guard urls.contains(where: {
-                $0.deletingLastPathComponent().standardizedFileURL.path != destPath
-            }) else { return nil }
-            return dest
+            let movable = movableURLs(urls, into: destination)
+            guard !movable.isEmpty else { return nil }
+            return (movable, destination, folderRow)
         }
 
         func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
                        proposedRow row: Int, proposedDropOperation operation: NSTableView.DropOperation) -> NSDragOperation {
-            guard let dest = dropDestination(info, row: row, operation: operation) else { return [] }
-            if operation == .on, row >= 0, row < files.count,
-               files[row].isDirectory, dest == files[row].url {
-                tableView.setDropRow(row, dropOperation: .on)
+            guard let target = dropTarget(info, row: row, operation: operation) else { return [] }
+            if let folderRow = target.folderRow {
+                tableView.setDropRow(folderRow, dropOperation: .on)
             } else {
                 tableView.setDropRow(-1, dropOperation: .on)
             }
             // 应用内拖动默认移动（⌥ 复制），外部（Finder）默认复制（⌥ 移动）
             let wanted: NSDragOperation = (info.draggingSource != nil) != NSEvent.modifierFlags.contains(.option) ? .move : .copy
-            let op = wanted.intersection(info.draggingSourceOperationMask)
-            return op.isEmpty ? info.draggingSourceOperationMask.intersection(.copy) : op
+            let result = wanted.intersection(info.draggingSourceOperationMask)
+            return result.isEmpty ? info.draggingSourceOperationMask.intersection(.copy) : result
         }
 
         func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
                        row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
-            guard let urls = draggedFileURLs(from: info), !urls.isEmpty,
-                  let destination = dropDestination(info, row: row, operation: dropOperation) else { return false }
-            // 不能把文件夹拖进它自己的子目录
-            let destPath = destination.standardizedFileURL.path
-            let movable = urls.filter {
-                $0.deletingLastPathComponent().standardizedFileURL.path != destPath
-                    && !destination.path.hasPrefix($0.path + "/")
-            }
-            guard !movable.isEmpty else { return false }
+            guard let target = dropTarget(info, row: row, operation: dropOperation) else { return false }
             let isMove = (info.draggingSource != nil) != NSEvent.modifierFlags.contains(.option)
-            fsService.pasteItems(movable, to: destination, isCut: isMove)
+            fsService.pasteItems(target.urls, to: target.destination, isCut: isMove)
             onRefresh()
             return true
         }
@@ -740,6 +725,32 @@ struct FileListTableView: NSViewRepresentable {
             }
             return menuProvider?(row, event)
         }
+
+        // NSTableView 内部发起的拖拽用懒加载 pasteboard writer，跨应用目标读不到数据；
+        // 会话建立后立即把行 URL 实际写入会话粘贴板，并把会话来源换成表格自己以提供操作掩码
+        override func beginDraggingSession(with items: [NSDraggingItem], event: NSEvent, source: NSDraggingSource) -> NSDraggingSession {
+            let session = super.beginDraggingSession(with: items, event: event, source: self)
+            let urls = items.compactMap { $0.item as? NSURL } as [URL]
+            if !urls.isEmpty {
+                session.draggingPasteboard.clearContents()
+                session.draggingPasteboard.writeObjects(urls as [NSURL])
+            }
+            return session
+        }
+
+        override func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
+            [.copy, .move]
+        }
+    }
+}
+
+/// 过滤无效拖放项：已在目标文件夹内的（拖回原文件夹 = 无操作）、
+/// 目标文件夹在拖拽项内部的（会把文件夹拖进自己的子目录）
+func movableURLs(_ urls: [URL], into destination: URL) -> [URL] {
+    let destinationPath = destination.standardizedFileURL.path
+    return urls.filter {
+        $0.deletingLastPathComponent().standardizedFileURL.path != destinationPath
+            && !destinationPath.hasPrefix($0.standardizedFileURL.path + "/")
     }
 }
 
