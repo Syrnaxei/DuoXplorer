@@ -21,7 +21,6 @@ struct MainContentView: View {
     @State private var isCreatingFolder = false
     @State private var newFolderText = ""
     @State private var watcherSource: DispatchSourceFileSystemObject?
-    @FocusState private var renameFieldFocused: Bool
     @FocusState private var newFolderFieldFocused: Bool
 
     /// 搜索过滤后的文件列表
@@ -104,7 +103,6 @@ struct MainContentView: View {
                     isRenaming: $isRenaming,
                     renameTarget: $renameTarget,
                     renameText: $renameText,
-                    renameFieldFocused: $renameFieldFocused,
                     onRefresh: { loadFiles() }
                 )
             }

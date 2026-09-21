@@ -1,104 +1,135 @@
 import SwiftUI
+import AppKit
 
-/// 目录树侧边栏
-struct SidebarTreeView: View {
+/// 目录树侧边栏（原生 NSOutlineView，source list 样式）
+struct SidebarTreeView: NSViewRepresentable {
     let roots: [TreeNode]
     let onSelect: (URL) -> Void
 
-    @State private var selectedURL: URL?
+    private static let cellID = NSUserInterfaceItemIdentifier("SidebarTreeCell")
 
-    var body: some View {
-        List(roots) { node in
-            SidebarTreeNodeRow(
-                node: node,
-                onSelect: { url in
-                    selectedURL = url
-                    onSelect(url)
-                },
-                selectedURL: selectedURL
-            )
+    func makeCoordinator() -> Coordinator {
+        Coordinator(roots: roots, onSelect: onSelect)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let outline = NSOutlineView()
+        outline.headerView = nil
+        outline.style = .sourceList
+        outline.backgroundColor = .clear
+        outline.floatsGroupRows = false
+        outline.indentationPerLevel = 12
+        outline.autoresizesOutlineColumn = true
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
+        column.resizingMask = .autoresizingMask
+        outline.addTableColumn(column)
+        outline.outlineTableColumn = column
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = outline
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+
+        let coordinator = context.coordinator
+        outline.dataSource = coordinator
+        outline.delegate = coordinator
+        outline.reloadData()
+        coordinator.outlineView = outline
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onSelect = onSelect
+        // body 每次求值都会新建 TreeNode 根；按路径判断是否真的变化，避免频繁 reloadData 丢展开状态
+        let key = roots.map(\.url.path).joined(separator: "|")
+        guard key != coordinator.rootsKey else { return }
+        coordinator.rootsKey = key
+        coordinator.roots = roots
+        coordinator.outlineView?.reloadData()
+    }
+
+    @MainActor final class Coordinator: NSObject, NSOutlineViewDataSource, NSOutlineViewDelegate {
+        var roots: [TreeNode]
+        var onSelect: ((URL) -> Void)?
+        var rootsKey: String
+        weak var outlineView: NSOutlineView?
+
+        init(roots: [TreeNode], onSelect: @escaping (URL) -> Void) {
+            self.roots = roots
+            self.onSelect = onSelect
+            self.rootsKey = roots.map(\.url.path).joined(separator: "|")
         }
-        .listStyle(.sidebar)
-    }
-}
 
-struct SidebarTreeNodeRow: View {
-    @ObservedObject var node: TreeNode
-    let onSelect: (URL) -> Void
-    let selectedURL: URL?
+        // MARK: 数据源（子目录懒加载：未加载视为可展开，数量 0，展开后异步加载再刷新）
 
-    private var isSelected: Bool { node.url == selectedURL }
+        func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+            if item == nil { return roots.count }
+            return (item as? TreeNode)?.children?.count ?? 0
+        }
 
-    /// 仿 Finder 的灰色选中高亮；用 listRowBackground 铺满整行：
-    /// 左侧覆盖展开箭头，上下与相邻行相接
-    private var rowHighlight: some View {
-        RoundedRectangle(cornerRadius: 5)
-            .fill(Color.primary.opacity(isSelected ? 0.12 : 0))
-    }
+        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+            guard let node = item as? TreeNode else { return false }
+            return node.isDirectory && (node.children == nil || !node.children!.isEmpty)
+        }
 
-    var body: some View {
-        Group {
-            if node.children == nil && node.isDirectory {
-                // 尚未加载子节点
-                HStack {
-                    Image(systemName: "folder")
-                        .foregroundColor(.accentColor)
-                    Text(node.name)
-                        .font(.system(size: 13))
-                    Spacer()
+        func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+            if item == nil { return roots[index] }
+            return (item as! TreeNode).children![index]
+        }
 
-                    if node.isLoading {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                            .frame(width: 12, height: 12)
-                    }
-                }
-                .padding(.vertical, 3)
-                .padding(.horizontal, 10)
-                .contentShape(Rectangle())
-                .onTapGesture { onSelect(node.url) }
-                .task {
-                    await node.loadChildren()
-                }
-            } else if let children = node.children, !children.isEmpty {
-                // 有子文件夹
-                DisclosureGroup(
-                    content: {
-                        ForEach(children) { child in
-                            SidebarTreeNodeRow(node: child, onSelect: onSelect, selectedURL: selectedURL)
-                        }
-                    },
-                    label: {
-                        HStack {
-                            Image(systemName: "folder")
-                                .foregroundColor(.accentColor)
-                            Text(node.name)
-                                .font(.system(size: 13))
-                        }
-                        .padding(.vertical, 3)
-                        .padding(.horizontal, 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .onTapGesture { onSelect(node.url) }
-                    }
-                )
-            } else {
-                // 空文件夹
-                HStack {
-                    Image(systemName: "folder")
-                        .foregroundColor(.secondary)
-                    Text(node.name)
-                        .font(.system(size: 13))
-                }
-                .padding(.vertical, 3)
-                .padding(.horizontal, 10)
-                .contentShape(Rectangle())
-                .onTapGesture { onSelect(node.url) }
+        func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+            guard let node = item as? TreeNode else { return nil }
+            let cell = outlineView.makeView(withIdentifier: SidebarTreeView.cellID, owner: nil) as? NSTableCellView
+                ?? Self.makeCell()
+            cell.textField?.stringValue = node.name
+            cell.imageView?.image = NSWorkspace.shared.icon(forFile: node.url.path)
+            return cell
+        }
+
+        private static func makeCell() -> NSTableCellView {
+            let cell = NSTableCellView()
+            cell.identifier = cellID
+            let imageView = NSImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.imageScaling = .scaleProportionallyDown
+            let textField = NSTextField(labelWithString: "")
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            textField.lineBreakMode = .byTruncatingTail
+            cell.addSubview(imageView)
+            cell.addSubview(textField)
+            cell.imageView = imageView
+            cell.textField = textField
+            NSLayoutConstraint.activate([
+                imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
+                imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                imageView.widthAnchor.constraint(equalToConstant: 16),
+                imageView.heightAnchor.constraint(equalToConstant: 16),
+                textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 5),
+                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+            ])
+            return cell
+        }
+
+        // MARK: 展开与选中
+
+        func outlineViewItemWillExpand(_ notification: Notification) {
+            guard let outline = notification.object as? NSOutlineView,
+                  let node = notification.userInfo?["NSObject"] as? TreeNode,
+                  node.children == nil else { return }
+            Task { @MainActor in
+                await node.loadChildren()
+                outline.reloadItem(node, reloadChildren: true)
             }
         }
-        // 行内边距清零，让内容（含点击区）铺满整行，与 listRowBackground 高亮范围一致；
-        // 原有边距用行内 padding(.horizontal, 10) 补偿
-        .listRowInsets(EdgeInsets())
-        .listRowBackground(rowHighlight)
+
+        func outlineViewSelectionDidChange(_ notification: Notification) {
+            guard let outline = notification.object as? NSOutlineView,
+                  let node = outline.item(atRow: outline.selectedRow) as? TreeNode else { return }
+            onSelect?(node.url)
+        }
     }
 }

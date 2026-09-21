@@ -16,13 +16,15 @@ struct FileListView: View {
     @Binding var isRenaming: Bool
     @Binding var renameTarget: URL?
     @Binding var renameText: String
-    var renameFieldFocused: FocusState<Bool>.Binding
     let onRefresh: () -> Void
 
-    @State private var focusedRowIndex: Int? = nil
     @State private var isCreatingFolder = false
     @State private var newFolderText = "新建文件夹"
     @FocusState private var newFolderFieldFocused: Bool
+
+    private var cutURLs: Set<URL> {
+        clipboardIsCut ? Set(clipboardURLs) : []
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -74,86 +76,30 @@ struct FileListView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .contextMenu { blankAreaContextMenu }
-                .onAppear { installKeyboardMonitor() }
             } else {
-                VStack {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(spacing: 0) {
-                                ForEach(Array(sortedFiles.enumerated()), id: \.element.id) { index, file in
-                                    VStack(spacing: 0) {
-                                        if isRenaming && renameTarget == file.url {
-                                            renameInlineRow(file: file)
-                                        } else {
-                                            FileRow(
-                                                file: file,
-                                                isSelected: selectedURLs.contains(file.url),
-                                                isFocused: focusedRowIndex == index,
-                                                isCut: clipboardIsCut && clipboardURLs.contains(file.url),
-                                                onDoubleClick: {
-                                                    if file.isDirectory { onNavigate(file.url) }
-                                                    else { fsService.openFile(file.url) }
-                                                },
-                                                onClick: { handleClick(file, index: index) }
-                                            )
-                                            .contextMenu { contextMenu(for: file) }
-                                        }
-                                    }
-                                    .background(
-                                        selectedURLs.contains(file.url)
-                                            ? Color.accentColor.opacity(0.3)
-                                            : (focusedRowIndex == index ? Color.accentColor.opacity(0.08) : Color.clear)
-                                    )
-                                    .contentShape(Rectangle())
-
-                                    Divider().padding(.leading, 28)
-                                }
-                            }
+                FileListTableView(
+                    files: sortedFiles,
+                    selectedURLs: $selectedURLs,
+                    cutURLs: cutURLs,
+                    renameTarget: renameTarget,
+                    onOpen: { file in
+                        if file.isDirectory { onNavigate(file.url) }
+                        else { fsService.openFile(file.url) }
+                    },
+                    onSelection: { urls in
+                        selectedURLs = urls
+                    },
+                    onRenameEnd: { newName, canceled in
+                        if canceled { cancelRename() } else {
+                            renameText = newName
+                            commitRename()
                         }
-                        .contextMenu { blankAreaContextMenu }
-                        .onTapGesture { selectedURLs = []; focusedRowIndex = nil }
-                    }
-                }
+                    },
+                    menuItems: menuItems
+                )
                 .onAppear { installKeyboardMonitor() }
-                .onChange(of: files.count) { _, count in
-                    if let idx = focusedRowIndex, idx >= count { focusedRowIndex = nil }
-                }
             }
         }
-    }
-
-    // MARK: - 内联重命名行
-
-    private func renameInlineRow(file: FileItem) -> some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(nsImage: iconForFile(file))
-                    .resizable().frame(width: 20, height: 20)
-                TextField("", text: $renameText)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .focused(renameFieldFocused)
-                    .onSubmit { commitRename() }
-                    .onExitCommand { cancelRename() }
-                    .onAppear {
-                        renameText = file.name
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                            renameFieldFocused.wrappedValue = true
-                        }
-                    }
-            }
-            .frame(minWidth: 200, alignment: .leading)
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(Color.accentColor.opacity(0.12))
-    }
-
-    private func iconForFile(_ file: FileItem) -> NSImage {
-        let icon = NSWorkspace.shared.icon(forFile: file.url.path)
-        icon.size = NSSize(width: 20, height: 20)
-        return icon
     }
 
     // MARK: - 排序
@@ -185,35 +131,17 @@ struct FileListView: View {
         return result
     }
 
-    // MARK: - 点击
-
-    private func handleClick(_ file: FileItem, index: Int) {
-        if NSEvent.modifierFlags.contains(.command) {
-            if selectedURLs.contains(file.url) {
-                selectedURLs.remove(file.url)
-            } else {
-                selectedURLs.insert(file.url)
-            }
-        } else if NSEvent.modifierFlags.contains(.shift) {
-            selectedURLs.insert(file.url)
-        } else {
-            selectedURLs = [file.url]
-        }
-        focusedRowIndex = index
-    }
-
     // MARK: - 键盘事件监控
 
     @State private var keyboardInstalled = false
 
     private func handleKey(event: NSEvent) -> NSEvent? {
-        // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时，
-        // 退格/回车/方向键交给输入框原生处理，不做键盘导航劫持
+        // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时，按键交给输入框原生处理；
+        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持退格/回车/F2
         if NSApp.keyWindow?.firstResponder is NSTextView { return event }
         guard !isRenaming, !isCreatingFolder,
               let window = NSApp.keyWindow,
               event.window == window else { return event }
-        let list = sortedFiles
 
         // 空文件夹也允许退格返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
         if event.keyCode == 51 {
@@ -221,42 +149,18 @@ struct FileListView: View {
             onNavigate(currentURL.deletingLastPathComponent())
             return nil
         }
-        guard !list.isEmpty else { return event }
 
         switch event.keyCode {
-        case 125: // 下箭头
-            if let idx = focusedRowIndex, idx < list.count - 1 {
-                focusedRowIndex = idx + 1
-                if !event.modifierFlags.contains(.shift) { selectedURLs = [list[focusedRowIndex!].url] }
-                else { selectedURLs.insert(list[focusedRowIndex!].url) }
-            } else if focusedRowIndex == nil {
-                focusedRowIndex = 0
-                selectedURLs = [list[0].url]
-            }
-            return nil
-        case 126: // 上箭头
-            if let idx = focusedRowIndex {
-                // 索引可能因目录切换/搜索过滤而失效，钳制到当前列表范围
-                let target = min(idx - 1, list.count - 1)
-                if target >= 0 {
-                    focusedRowIndex = target
-                    if !event.modifierFlags.contains(.shift) { selectedURLs = [list[target].url] }
-                    else { selectedURLs.insert(list[target].url) }
-                }
-            }
-            return nil
-        case 36: // 回车
-            if let idx = focusedRowIndex, idx < list.count {
-                let file = list[idx]
+        case 36: // 回车打开
+            if let url = selectedURLs.first,
+               let file = files.first(where: { $0.url == url }) {
                 if file.isDirectory { onNavigate(file.url) }
                 else { fsService.openFile(file.url) }
             }
             return nil
-        case 120: // F2
+        case 120: // F2 重命名
             if let url = selectedURLs.first, selectedURLs.count == 1 {
-                renameTarget = url
-                renameText = url.lastPathComponent
-                isRenaming = true
+                startRename(url)
             }
             return nil
         default:
@@ -270,9 +174,10 @@ struct FileListView: View {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: handleKey)
     }
 
+    // MARK: - 重命名
+
     /// 开始重命名（从右键菜单或键盘触发）
-    func startRename() {
-        guard let url = selectedURLs.first, selectedURLs.count == 1 else { return }
+    func startRename(_ url: URL) {
         renameTarget = url
         renameText = url.lastPathComponent
         isRenaming = true
@@ -321,7 +226,7 @@ struct FileListView: View {
         isCreatingFolder = false
     }
 
-    // MARK: - 菜单
+    // MARK: - 菜单（空文件夹视图仍用 SwiftUI contextMenu）
 
     @ViewBuilder
     private var blankAreaContextMenu: some View {
@@ -330,13 +235,7 @@ struct FileListView: View {
         }
 
         Button("粘贴") {
-            guard !clipboardURLs.isEmpty else { return }
-            let executed = fsService.pasteItems(clipboardURLs, to: currentURL, isCut: clipboardIsCut)
-            if clipboardIsCut && executed {
-                clipboardURLs = []
-                clipboardIsCut = false
-            }
-            onRefresh()
+            pasteFromClipboard()
         }
         .disabled(clipboardURLs.isEmpty)
 
@@ -347,97 +246,409 @@ struct FileListView: View {
         }
     }
 
-    @ViewBuilder
-    private func contextMenu(for file: FileItem) -> some View {
-        Button("打开") {
-            if file.isDirectory { onNavigate(file.url) } else { fsService.openFile(file.url) }
-        }
-
-        Divider()
-
-        Button("复制") {
-            clipboardURLs = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
+    private func pasteFromClipboard() {
+        guard !clipboardURLs.isEmpty else { return }
+        let executed = fsService.pasteItems(clipboardURLs, to: currentURL, isCut: clipboardIsCut)
+        if clipboardIsCut && executed {
+            clipboardURLs = []
             clipboardIsCut = false
         }
+        onRefresh()
+    }
 
-        Button("剪切") {
-            clipboardURLs = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
-            clipboardIsCut = true
+    /// 右键菜单条目（file 为 nil 表示空白区域），由 NSTableView 构建 NSMenu
+    private func menuItems(for file: FileItem?) -> [FileMenuItem] {
+        guard let file else {
+            return [
+                FileMenuItem("新建文件夹") { startCreateFolder() },
+                FileMenuItem("粘贴", enabled: !clipboardURLs.isEmpty) { pasteFromClipboard() },
+                .divider,
+                FileMenuItem(showHiddenFiles ? "不显示隐藏项目" : "显示隐藏项目") { showHiddenFiles.toggle() },
+            ]
         }
-
-        Divider()
-
-        Button("重命名") {
-            renameTarget = file.url
-            renameText = file.name
-            isRenaming = true
-        }
-
-        Divider()
-
-        Button("在 Finder 中显示") {
-            fsService.revealInFinder(file.url)
-        }
-
+        var items: [FileMenuItem] = [
+            FileMenuItem("打开") {
+                if file.isDirectory { onNavigate(file.url) } else { fsService.openFile(file.url) }
+            },
+            .divider,
+            FileMenuItem("复制") {
+                clipboardURLs = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
+                clipboardIsCut = false
+            },
+            FileMenuItem("剪切") {
+                clipboardURLs = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
+                clipboardIsCut = true
+            },
+            .divider,
+            FileMenuItem("重命名") { startRename(file.url) },
+            .divider,
+            FileMenuItem("在 Finder 中显示") { fsService.revealInFinder(file.url) },
+        ]
         if file.isDirectory {
-            Button("在 Finder 中打开") {
-                fsService.openInFinder(file.url)
-            }
+            items.append(FileMenuItem("在 Finder 中打开") { fsService.openInFinder(file.url) })
         }
-
-        Divider()
-
-        Button("复制路径") {
-            fsService.copyPath(file.url)
-        }
-
-        Divider()
-
-        Button("移到废纸篓") {
-            let urls = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
-            fsService.moveToTrash(urls)
-            onRefresh()
-        }
-        .keyboardShortcut(.delete, modifiers: [])
+        items += [
+            .divider,
+            FileMenuItem("复制路径") { fsService.copyPath(file.url) },
+            .divider,
+            FileMenuItem("移到废纸篓", keyEquivalent: String(UnicodeScalar(NSDeleteFunctionKey)!)) {
+                let urls = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
+                fsService.moveToTrash(urls)
+                onRefresh()
+            },
+        ]
+        return items
     }
 }
 
-// MARK: - 点击检测（无单击延迟）
+// MARK: - 菜单条目数据（title 为空表示分隔线）
 
-struct ClickDetector: NSViewRepresentable {
-    let onClick: () -> Void
-    let onDoubleClick: () -> Void
+@MainActor struct FileMenuItem {
+    let title: String
+    let keyEquivalent: String?
+    let enabled: Bool
+    let action: () -> Void
 
-    func makeNSView(context: Context) -> NSView {
-        DetectorView(onClick: onClick, onDoubleClick: onDoubleClick)
+    init(_ title: String, keyEquivalent: String? = nil, enabled: Bool = true, action: @escaping () -> Void) {
+        self.title = title
+        self.keyEquivalent = keyEquivalent
+        self.enabled = enabled
+        self.action = action
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? DetectorView)?.update(onClick: onClick, onDoubleClick: onDoubleClick)
+    static let divider = FileMenuItem("", enabled: true, action: {})
+    var isDivider: Bool { title.isEmpty }
+}
+
+// MARK: - 原生文件列表（NSTableView：原生选中/多选/双击/行内重命名/右键菜单）
+
+struct FileListTableView: NSViewRepresentable {
+    let files: [FileItem]
+    @Binding var selectedURLs: Set<URL>
+    let cutURLs: Set<URL>
+    let renameTarget: URL?
+    let onOpen: (FileItem) -> Void
+    let onSelection: (Set<URL>) -> Void
+    let onRenameEnd: (String, Bool) -> Void
+    let menuItems: (FileItem?) -> [FileMenuItem]
+
+    private static let nameCellID = NSUserInterfaceItemIdentifier("FileListNameCell")
+    private static let textCellID = NSUserInterfaceItemIdentifier("FileListTextCell")
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            files: files,
+            cutURLs: cutURLs,
+            onOpen: onOpen,
+            onSelection: onSelection,
+            onRenameEnd: onRenameEnd,
+            menuItems: menuItems
+        )
     }
 
-    private final class DetectorView: NSView {
-        var onClick: () -> Void
-        var onDoubleClick: () -> Void
+    func makeNSView(context: Context) -> NSScrollView {
+        let table = FileTable()
+        table.headerView = nil
+        table.style = .fullWidth
+        table.rowHeight = 28
+        table.intercellSpacing = NSSize(width: 0, height: 1)
+        table.gridStyleMask = .solidHorizontalGridLineMask
+        table.allowsMultipleSelection = true
+        table.allowsColumnReordering = false
+        table.allowsColumnResizing = false
+        table.setAccessibilityIdentifier("FileList")
 
-        init(onClick: @escaping () -> Void, onDoubleClick: @escaping () -> Void) {
-            self.onClick = onClick
-            self.onDoubleClick = onDoubleClick
-            super.init(frame: .zero)
+        let name = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        name.width = 200
+        name.resizingMask = .autoresizingMask
+        let date = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("date"))
+        date.width = 155
+        date.resizingMask = []
+        let kind = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("kind"))
+        kind.width = 130
+        kind.resizingMask = []
+        let size = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("size"))
+        size.width = 100
+        size.resizingMask = []
+        table.addTableColumn(name)
+        table.addTableColumn(date)
+        table.addTableColumn(kind)
+        table.addTableColumn(size)
+
+        let coordinator = context.coordinator
+        table.dataSource = coordinator
+        table.delegate = coordinator
+        table.target = coordinator
+        table.doubleAction = #selector(Coordinator.doubleClicked(_:))
+        table.menuProvider = { [weak coordinator] row, _ in
+            coordinator?.menu(forRow: row)
+        }
+        table.reloadData()
+        coordinator.table = table
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = table
+        scrollView.hasVerticalScroller = true
+        scrollView.autohidesScrollers = true
+        scrollView.drawsBackground = false
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onOpen = onOpen
+        coordinator.onSelection = onSelection
+        coordinator.onRenameEnd = onRenameEnd
+        coordinator.menuItems = menuItems
+
+        let key = files.map { $0.url.path }.joined(separator: "|")
+        if key != coordinator.filesKey {
+            coordinator.files = files
+            coordinator.filesKey = key
+            coordinator.table?.reloadData()
         }
 
-        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
-
-        func update(onClick: @escaping () -> Void, onDoubleClick: @escaping () -> Void) {
-            self.onClick = onClick
-            self.onDoubleClick = onDoubleClick
+        let cutKey = cutURLs.map(\.path).sorted().joined(separator: "|")
+        if cutKey != coordinator.cutKey {
+            coordinator.cutURLs = cutURLs
+            coordinator.cutKey = cutKey
+            coordinator.refreshCutAppearance()
         }
 
-        override func mouseDown(with event: NSEvent) {
-            if event.clickCount >= 2 { onDoubleClick() } else { onClick() }
+        coordinator.syncSelection(to: selectedURLs)
+        coordinator.syncRename(renameTarget)
+    }
+
+    @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSControlTextEditingDelegate {
+        var files: [FileItem]
+        var cutURLs: Set<URL>
+        var onOpen: (FileItem) -> Void
+        var onSelection: (Set<URL>) -> Void
+        var onRenameEnd: (String, Bool) -> Void
+        var menuItems: (FileItem?) -> [FileMenuItem]
+        weak var table: NSTableView?
+        var filesKey = ""
+        var cutKey = ""
+        var renameRow: Int?
+        var isSyncingSelection = false
+
+        init(files: [FileItem], cutURLs: Set<URL>, onOpen: @escaping (FileItem) -> Void,
+             onSelection: @escaping (Set<URL>) -> Void, onRenameEnd: @escaping (String, Bool) -> Void,
+             menuItems: @escaping (FileItem?) -> [FileMenuItem]) {
+            self.files = files
+            self.cutURLs = cutURLs
+            self.onOpen = onOpen
+            self.onSelection = onSelection
+            self.onRenameEnd = onRenameEnd
+            self.menuItems = menuItems
         }
 
-        override func acceptsFirstMouse(for _: NSEvent?) -> Bool { true }
+        // MARK: 数据源
+
+        func numberOfRows(in tableView: NSTableView) -> Int {
+            files.count
+        }
+
+        func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+            guard row < files.count else { return nil }
+            let file = files[row]
+
+            switch tableColumn?.identifier.rawValue {
+            case "name":
+                let cell = tableView.makeView(withIdentifier: FileListTableView.nameCellID, owner: nil)
+                    as? NSTableCellView ?? Self.makeNameCell()
+                cell.textField?.stringValue = file.name
+                cell.imageView?.image = icon(for: file)
+                cell.textField?.isEditable = false
+                cell.alphaValue = cutURLs.contains(file.url) ? 0.45 : 1
+                return cell
+            case "date":
+                let cell = tableView.makeView(withIdentifier: FileListTableView.textCellID, owner: nil)
+                    as? NSTableCellView ?? Self.makeTextCell()
+                cell.textField?.stringValue = file.formattedDate
+                return cell
+            case "kind":
+                let cell = tableView.makeView(withIdentifier: FileListTableView.textCellID, owner: nil)
+                    as? NSTableCellView ?? Self.makeTextCell()
+                cell.textField?.stringValue = file.fileTypeDisplay
+                return cell
+            case "size":
+                let cell = tableView.makeView(withIdentifier: FileListTableView.textCellID, owner: nil)
+                    as? NSTableCellView ?? Self.makeTextCell()
+                cell.textField?.stringValue = file.isDirectory ? "--" : file.formattedSize
+                cell.textField?.alignment = .right
+                return cell
+            default:
+                return nil
+            }
+        }
+
+        private func icon(for file: FileItem) -> NSImage {
+            let image = NSWorkspace.shared.icon(forFile: file.url.path)
+            image.size = NSSize(width: 20, height: 20)
+            return image
+        }
+
+        private static func makeNameCell() -> NSTableCellView {
+            let cell = NSTableCellView()
+            cell.identifier = nameCellID
+            let imageView = NSImageView()
+            imageView.translatesAutoresizingMaskIntoConstraints = false
+            imageView.imageScaling = .scaleProportionallyDown
+            let textField = NSTextField(labelWithString: "")
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            textField.font = .systemFont(ofSize: 13)
+            textField.lineBreakMode = .byTruncatingTail
+            cell.addSubview(imageView)
+            cell.addSubview(textField)
+            cell.imageView = imageView
+            cell.textField = textField
+            NSLayoutConstraint.activate([
+                imageView.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                imageView.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                imageView.widthAnchor.constraint(equalToConstant: 20),
+                imageView.heightAnchor.constraint(equalToConstant: 20),
+                textField.leadingAnchor.constraint(equalTo: imageView.trailingAnchor, constant: 6),
+                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                textField.trailingAnchor.constraint(equalTo: cell.trailingAnchor),
+            ])
+            return cell
+        }
+
+        private static func makeTextCell() -> NSTableCellView {
+            let cell = NSTableCellView()
+            cell.identifier = textCellID
+            let textField = NSTextField(labelWithString: "")
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            textField.font = .systemFont(ofSize: 12)
+            textField.textColor = .secondaryLabelColor
+            textField.lineBreakMode = .byTruncatingTail
+            cell.addSubview(textField)
+            cell.textField = textField
+            NSLayoutConstraint.activate([
+                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12),
+                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+            ])
+            return cell
+        }
+
+        // MARK: 选中同步
+
+        private var currentSelection: Set<URL> {
+            guard let table else { return [] }
+            return Set(table.selectedRowIndexes.compactMap { row in
+                row < files.count ? files[row].url : nil
+            })
+        }
+
+        func syncSelection(to urls: Set<URL>) {
+            guard let table, currentSelection != urls else { return }
+            let indexes = IndexSet(files.enumerated().compactMap {
+                urls.contains($0.element.url) ? $0.offset : nil
+            })
+            isSyncingSelection = true
+            table.selectRowIndexes(indexes, byExtendingSelection: false)
+            isSyncingSelection = false
+        }
+
+        func tableViewSelectionDidChange(_ notification: Notification) {
+            guard !isSyncingSelection else { return }
+            onSelection(currentSelection)
+        }
+
+        // MARK: 双击打开
+
+        @objc func doubleClicked(_ sender: NSTableView) {
+            let row = sender.clickedRow
+            guard row >= 0, row < files.count else { return }
+            onOpen(files[row])
+        }
+
+        // MARK: 剪切态半透明
+
+        func refreshCutAppearance() {
+            guard let table else { return }
+            for row in 0..<min(table.numberOfRows, files.count) {
+                let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView
+                cell?.alphaValue = cutURLs.contains(files[row].url) ? 0.45 : 1
+            }
+        }
+
+        // MARK: 行内重命名（原生字段编辑器）
+
+        func syncRename(_ target: URL?) {
+            guard let table else { return }
+            let row: Int? = target.flatMap { target in
+                files.firstIndex { $0.url == target }
+            }
+            guard row != renameRow else { return }
+            renameRow = row
+            guard let row, row < table.numberOfRows else { return }
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            table.scrollRowToVisible(row)
+            if let cell = table.rowView(atRow: row, makeIfNecessary: true)?.view(atColumn: 0)
+                as? NSTableCellView {
+                cell.textField?.isEditable = true
+            }
+            DispatchQueue.main.async { [weak table] in
+                table?.editColumn(0, row: row, with: nil, select: true)
+            }
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let textField = obj.object as? NSTextField else { return }
+            textField.isEditable = false
+            renameRow = nil
+            let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap(NSTextMovement.init(rawValue:))
+            onRenameEnd(textField.stringValue, movement == .cancel)
+        }
+
+        // MARK: 右键菜单
+
+        func menu(forRow row: Int) -> NSMenu? {
+            let specs = menuItems(row >= 0 && row < files.count ? files[row] : nil)
+            let menu = NSMenu()
+            for spec in specs {
+                if spec.isDivider {
+                    menu.addItem(.separator())
+                } else {
+                    let item = NSMenuItem(
+                        title: spec.title,
+                        action: #selector(menuItemClicked(_:)),
+                        keyEquivalent: spec.keyEquivalent ?? ""
+                    )
+                    item.target = self
+                    item.isEnabled = spec.enabled
+                    item.representedObject = MenuActionBox(action: spec.action)
+                    menu.addItem(item)
+                }
+            }
+            return menu
+        }
+
+        @objc private func menuItemClicked(_ sender: NSMenuItem) {
+            (sender.representedObject as? MenuActionBox)?.action()
+        }
+    }
+
+    private final class MenuActionBox {
+        let action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+    }
+
+    /// 右键未选中行时先选中该行（Finder 行为）
+    final class FileTable: NSTableView {
+        var menuProvider: ((Int, NSEvent) -> NSMenu?)?
+
+        override func menu(for event: NSEvent) -> NSMenu? {
+            let point = convert(event.locationInWindow, from: nil)
+            let row = row(at: point)
+            if row >= 0, !selectedRowIndexes.contains(row) {
+                selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            }
+            return menuProvider?(row, event)
+        }
     }
 }
 
@@ -450,7 +661,7 @@ struct HeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             HeaderCell(title: "名称", option: .name, sortOption: $sortOption, sortDirection: $sortDirection)
-                .frame(minWidth: 200)
+                .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
             Divider().frame(height: 20)
             HeaderCell(title: "修改日期", option: .date, sortOption: $sortOption, sortDirection: $sortDirection)
                 .frame(width: 155)
@@ -460,7 +671,6 @@ struct HeaderRow: View {
             Divider().frame(height: 20)
             HeaderCell(title: "大小", option: .size, sortOption: $sortOption, sortDirection: $sortDirection)
                 .frame(width: 100)
-            Spacer()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
@@ -487,56 +697,5 @@ struct HeaderCell: View {
             }
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: - 单行文件
-
-struct FileRow: View {
-    let file: FileItem
-    let isSelected: Bool
-    let isFocused: Bool
-    let isCut: Bool
-    let onDoubleClick: () -> Void
-    let onClick: () -> Void
-
-    var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(nsImage: icon)
-                    .resizable().frame(width: 20, height: 20)
-                Text(file.name)
-                    .font(.system(size: 13)).lineLimit(1)
-            }
-            .frame(minWidth: 200, alignment: .leading)
-
-            Text(file.formattedDate)
-                .font(.system(size: 12)).foregroundColor(.secondary)
-                .frame(width: 155, alignment: .leading).padding(.leading, 12)
-
-            Text(file.fileTypeDisplay)
-                .font(.system(size: 12)).foregroundColor(.secondary)
-                .frame(width: 130, alignment: .leading).padding(.leading, 12)
-
-            Text(file.isDirectory ? "--" : file.formattedSize)
-                .font(.system(size: 12)).foregroundColor(.secondary)
-                .frame(width: 100, alignment: .trailing).padding(.trailing, 20)
-
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .opacity(isCut ? 0.45 : 1.0)
-        .overlay {
-            // SwiftUI 的 onTapGesture 单双击并存时会延迟单击回调（等待双击消歧），
-            // 改用 AppKit mouseDown + clickCount 即时区分单击选中与双击打开
-            ClickDetector(onClick: onClick, onDoubleClick: onDoubleClick)
-        }
-    }
-
-    private var icon: NSImage {
-        let i = NSWorkspace.shared.icon(forFile: file.url.path)
-        i.size = NSSize(width: 20, height: 20)
-        return i
     }
 }
