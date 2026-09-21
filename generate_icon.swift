@@ -4,7 +4,7 @@ import Foundation
 /// 用代码生成 App 图标 — 遵循 macOS（Big Sur+）图标规范：
 /// - 1024 画布，作品区域约 824/1024 居中，四周透明边距（小尺寸按比例放大占比）
 /// - 正面平视绘制（无透视），squircle 圆角 + 柔和投影 + 顶面高光
-/// - 主体：正面文件夹 + 双向交换箭头（DuoXplore 的双栏文件交换主题）
+/// - 主体：正面文件夹
 
 /// 各尺寸的作品区域占画布比例：大尺寸 0.824，越小越接近满幅
 func artworkFraction(for size: CGFloat) -> CGFloat {
@@ -14,32 +14,6 @@ func artworkFraction(for size: CGFloat) -> CGFloat {
     case ..<96: return 0.88
     default: return 0.824
     }
-}
-
-func drawArrow(ctx: CGContext, from: CGPoint, to: CGPoint, lineWidth: CGFloat, color: CGColor) {
-    let dx = to.x - from.x, dy = to.y - from.y
-    let len = sqrt(dx * dx + dy * dy)
-    let ux = dx / len, uy = dy / len
-    let headLength = lineWidth * 1.8
-    let shaftEnd = CGPoint(x: to.x - ux * headLength, y: to.y - uy * headLength)
-
-    // 箭杆
-    ctx.setStrokeColor(color)
-    ctx.setLineWidth(lineWidth)
-    ctx.setLineCap(.round)
-    ctx.move(to: from)
-    ctx.addLine(to: shaftEnd)
-    ctx.strokePath()
-
-    // 箭头
-    let headHalf = lineWidth * 1.5
-    let perp = CGPoint(x: -uy, y: ux)
-    ctx.setFillColor(color)
-    ctx.move(to: to)
-    ctx.addLine(to: CGPoint(x: shaftEnd.x + perp.x * headHalf, y: shaftEnd.y + perp.y * headHalf))
-    ctx.addLine(to: CGPoint(x: shaftEnd.x - perp.x * headHalf, y: shaftEnd.y - perp.y * headHalf))
-    ctx.closePath()
-    ctx.fillPath()
 }
 
 func generateAppIcon(size: CGFloat) -> NSImage {
@@ -134,17 +108,6 @@ func generateAppIcon(size: CGFloat) -> NSImage {
     ctx.drawLinearGradient(frontGrad, start: CGPoint(x: 0, y: y0 + 0.24 * A),
                            end: CGPoint(x: 0, y: y0 + 0.68 * A), options: [])
 
-    // 双向交换箭头：上排向右、下排向左（双栏文件交换）
-    let arrowColor = CGColor(srgbRed: 57/255.0, green: 197/255.0, blue: 187/255.0, alpha: 1)
-    let lw = 0.05 * A
-    drawArrow(ctx: ctx,
-              from: CGPoint(x: x0 + 0.28 * A, y: y0 + 0.545 * A),
-              to: CGPoint(x: x0 + 0.74 * A, y: y0 + 0.545 * A),
-              lineWidth: lw, color: arrowColor)
-    drawArrow(ctx: ctx,
-              from: CGPoint(x: x0 + 0.72 * A, y: y0 + 0.375 * A),
-              to: CGPoint(x: x0 + 0.26 * A, y: y0 + 0.375 * A),
-              lineWidth: lw, color: arrowColor)
     ctx.restoreGState()
 
     image.unlockFocus()
