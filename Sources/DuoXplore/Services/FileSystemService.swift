@@ -81,6 +81,12 @@ final class FileSystemService {
         NSWorkspace.shared.open(url)
     }
 
+    /// 在 Terminal 中打开文件夹
+    func openInTerminal(_ url: URL) {
+        let terminal = URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app")
+        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+    }
+
     /// 用默认应用打开文件
     func openFile(_ url: URL) {
         NSWorkspace.shared.open(url)

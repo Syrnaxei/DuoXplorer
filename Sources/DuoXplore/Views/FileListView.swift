@@ -258,6 +258,9 @@ struct FileListView: View {
                 FileMenuItem("新建文件夹") { startCreateFolder() },
                 FileMenuItem("粘贴", enabled: !clipboardURLs.isEmpty) { pasteFromClipboard() },
                 .divider,
+                FileMenuItem("在终端中打开") { fsService.openInTerminal(currentURL) },
+                FileMenuItem("在 Finder 中打开") { fsService.openInFinder(currentURL) },
+                .divider,
                 FileMenuItem(showHiddenFiles ? "不显示隐藏项目" : "显示隐藏项目") { showHiddenFiles.toggle() },
             ]
         }
@@ -276,11 +279,9 @@ struct FileListView: View {
             },
             .divider,
             FileMenuItem("重命名") { startRename(file.url) },
-            .divider,
-            FileMenuItem("在 Finder 中显示") { fsService.revealInFinder(file.url) },
         ]
-        if file.isDirectory {
-            items.append(FileMenuItem("在 Finder 中打开") { fsService.openInFinder(file.url) })
+        if !file.isDirectory {
+            items.append(FileMenuItem("在 Finder 中显示") { fsService.revealInFinder(file.url) })
         }
         items += [
             .divider,
