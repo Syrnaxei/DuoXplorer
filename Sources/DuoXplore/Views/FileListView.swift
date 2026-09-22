@@ -148,35 +148,37 @@ struct FileListView: View {
 
     private func handleKey(event: NSEvent) -> NSEvent? {
         // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时，按键交给输入框原生处理；
-        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持退格/回车/F2
+        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持用户在设置里定义的三个动作
         if NSApp.keyWindow?.firstResponder is NSTextView { return event }
         guard !isRenaming, !isCreatingFolder,
               let window = NSApp.keyWindow,
               event.window == window else { return event }
 
-        // 空文件夹也允许退格返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
-        if event.keyCode == 51 {
+        // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
+        let store = ShortcutStore.shared
+        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .navigateUp)) {
             guard currentURL.path != "/" else { return nil }
             onNavigate(currentURL.deletingLastPathComponent())
             return nil
         }
 
-        switch event.keyCode {
-        case 36: // 回车打开
+        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .openItem)) {
+            // 回车打开
             if let url = selectedURLs.first,
                let file = files.first(where: { $0.url == url }) {
                 if file.isDirectory { onNavigate(file.url) }
                 else { fsService.openFile(file.url) }
             }
             return nil
-        case 120: // F2 重命名
+        }
+        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .renameItem)) {
+            // 重命名
             if let url = selectedURLs.first, selectedURLs.count == 1 {
                 startRename(url)
             }
             return nil
-        default:
-            return event
         }
+        return event
     }
 
     func installKeyboardMonitor() {

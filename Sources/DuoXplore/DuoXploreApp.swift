@@ -176,9 +176,13 @@ struct DuoXploreApp: App {
                     showHiddenFiles.toggle()
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
+
+                Button("搜索") { focusSearchField() }
+                    .keyboardShortcut("f", modifiers: .command)
             }
 
-            CommandGroup(after: .pasteboard) {
+            // replacing：去掉 SwiftUI 自动生成的系统剪切/复制/粘贴项，避免同名菜单项与 ⌘C 等键位冲突
+            CommandGroup(replacing: .pasteboard) {
                 Button("复制") {
                     clipboardURLs = Array(selectedURLs)
                     clipboardIsCut = false
@@ -200,6 +204,11 @@ struct DuoXploreApp: App {
                 .keyboardShortcut("v", modifiers: .command)
                 .disabled(clipboardURLs.isEmpty)
 
+                Button("全选") {
+                    NSApp.sendAction(Selector(("selectAll:")), to: nil, from: nil)
+                }
+                .keyboardShortcut("a", modifiers: .command)
+
                 Divider()
 
                 Button("移到废纸篓") {
@@ -209,6 +218,27 @@ struct DuoXploreApp: App {
                 }
                 .keyboardShortcut(.delete, modifiers: [])
             }
+        }
+
+        Settings {
+            ShortcutSettingsView()
+        }
+    }
+
+    /// 把焦点交给工具栏搜索框（searchable 没有暴露聚焦 API，靠遍历 AppKit 视图层找 NSSearchField；
+    /// 工具栏挂在 contentView 的父视图 themeFrame 下，扫描要从那里开始）
+    private func focusSearchField() {
+        guard let window = NSApp.keyWindow, let contentView = window.contentView else { return }
+        let root = contentView.superview ?? contentView
+        func find(in view: NSView) -> NSSearchField? {
+            if let field = view as? NSSearchField { return field }
+            for sub in view.subviews {
+                if let field = find(in: sub) { return field }
+            }
+            return nil
+        }
+        if let field = find(in: root) {
+            window.makeFirstResponder(field)
         }
     }
 }
