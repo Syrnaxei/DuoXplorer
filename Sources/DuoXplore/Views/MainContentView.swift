@@ -18,15 +18,13 @@ struct MainContentView: View {
     @State private var isRenaming = false
     @State private var renameTarget: URL?
     @State private var renameText = ""
-    @State private var isCreatingFolder = false
-    @State private var newFolderText = ""
+    @State private var loadError: String?
     @State private var watcherSource: DispatchSourceFileSystemObject?
-    @FocusState private var newFolderFieldFocused: Bool
+    @StateObject private var spotlight = SpotlightSearchService()
 
-    /// 搜索过滤后的文件列表
+    /// 搜索时显示 Spotlight（或回退）结果，否则显示当前文件夹
     var displayedFiles: [FileItem] {
-        guard !searchText.isEmpty else { return files }
-        return files.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+        searchText.isEmpty ? files : spotlight.items
     }
 
     /// 状态栏统计
@@ -62,6 +60,8 @@ struct MainContentView: View {
                     clipboardIsCut: $clipboardIsCut,
                     currentURL: $currentURL,
                     showHiddenFiles: $showHiddenFiles,
+                    loadError: loadError,
+                    isSearching: !searchText.isEmpty,
                     onNavigate: { url in
                         navigationState.push(currentURL)
                         currentURL = url
@@ -83,6 +83,16 @@ struct MainContentView: View {
         .onChange(of: showHiddenFiles) { loadFiles() }
         .onAppear { loadFiles() }
         .onChange(of: currentURL) { startWatcher() }
+        .onChange(of: searchText) { text in
+            selectedURLs = []
+            guard !text.isEmpty else {
+                spotlight.stop()
+                return
+            }
+            spotlight.search(text: text, in: currentURL) { t in
+                files.filter { $0.name.localizedCaseInsensitiveContains(t) }
+            }
+        }
         .searchable(text: $searchText, placement: .toolbar, prompt: "搜索")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
@@ -124,15 +134,12 @@ struct MainContentView: View {
 
     private var statusBar: some View {
         HStack {
-            let total = files.count
-            let displayed = displayedFiles.count
-
-            Text("\(total) 个项目")
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-
-            if searchText.isEmpty && displayed != total {
-                Text("(共 \(total) 个)")
+            if searchText.isEmpty {
+                Text("\(files.count) 个项目")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else {
+                Text("\(displayedFiles.count) 个结果")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
             }
@@ -156,38 +163,14 @@ struct MainContentView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private func startCreateFolder() {
-        newFolderText = "新建文件夹"
-        isCreatingFolder = true
-        newFolderFieldFocused = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            newFolderFieldFocused = true
-        }
-    }
-
-    func commitCreateFolder() {
-        guard !newFolderText.trimmingCharacters(in: .whitespaces).isEmpty,
-              fsService.isValidFileName(newFolderText) else {
-            isCreatingFolder = false
-            return
-        }
-        let finalName = newFolderText.trimmingCharacters(in: .whitespaces)
-        do {
-            _ = try fsService.createFolder(at: currentURL, name: finalName)
-            loadFiles()
-        } catch {
-            print("创建文件夹失败: \(error)")
-        }
-        isCreatingFolder = false
-    }
-
     private func loadFiles() {
         isLoading = true
         do {
             files = try fsService.listDirectory(at: currentURL, showHidden: showHiddenFiles)
+            loadError = nil
         } catch {
             files = []
-            print("加载目录失败: \(error)")
+            loadError = error.localizedDescription
         }
         selectedURLs = []
         searchText = ""

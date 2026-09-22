@@ -11,6 +11,8 @@ struct FileListView: View {
     @Binding var clipboardIsCut: Bool
     @Binding var currentURL: URL
     @Binding var showHiddenFiles: Bool
+    let loadError: String?
+    let isSearching: Bool
     let onNavigate: (URL) -> Void
     let fsService: FileSystemService
     @Binding var isRenaming: Bool
@@ -66,41 +68,47 @@ struct FileListView: View {
 
             Divider()
 
-            // 文件列表
-            if files.isEmpty && !isCreatingFolder {
-                VStack {
-                    Spacer()
-                    Text("此文件夹为空")
-                        .foregroundColor(.secondary)
-                    Spacer()
+            // 文件列表（空文件夹也保持表格挂载：接收拖放、安装键盘监听、复用空白区右键菜单）
+            FileListTableView(
+                files: sortedFiles,
+                selectedURLs: $selectedURLs,
+                cutURLs: cutURLs,
+                renameTarget: renameTarget,
+                currentURL: currentURL,
+                fsService: fsService,
+                onOpen: { file in
+                    if file.isDirectory { onNavigate(file.url) }
+                    else { fsService.openFile(file.url) }
+                },
+                onSelection: { urls in
+                    selectedURLs = urls
+                },
+                onRenameEnd: { newName, canceled in
+                    if canceled { cancelRename() } else {
+                        renameText = newName
+                        commitRename()
+                    }
+                },
+                onRefresh: onRefresh,
+                menuItems: menuItems
+            )
+            .onAppear { installKeyboardMonitor() }
+            .overlay {
+                if files.isEmpty {
+                    let (symbol, message): (String, String) = {
+                        if let loadError { return ("exclamationmark.triangle", "无法读取此文件夹：\(loadError)") }
+                        if isSearching { return ("magnifyingglass", "无搜索结果") }
+                        return ("folder", "此文件夹为空")
+                    }()
+                    VStack(spacing: 10) {
+                        Image(systemName: symbol)
+                            .font(.system(size: 44, weight: .light))
+                            .foregroundColor(.secondary.opacity(0.6))
+                        Text(message)
+                            .foregroundColor(.secondary)
+                    }
+                    .allowsHitTesting(false)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contextMenu { blankAreaContextMenu }
-            } else {
-                FileListTableView(
-                    files: sortedFiles,
-                    selectedURLs: $selectedURLs,
-                    cutURLs: cutURLs,
-                    renameTarget: renameTarget,
-                    currentURL: currentURL,
-                    fsService: fsService,
-                    onOpen: { file in
-                        if file.isDirectory { onNavigate(file.url) }
-                        else { fsService.openFile(file.url) }
-                    },
-                    onSelection: { urls in
-                        selectedURLs = urls
-                    },
-                    onRenameEnd: { newName, canceled in
-                        if canceled { cancelRename() } else {
-                            renameText = newName
-                            commitRename()
-                        }
-                    },
-                    onRefresh: onRefresh,
-                    menuItems: menuItems
-                )
-                .onAppear { installKeyboardMonitor() }
             }
         }
     }
@@ -229,25 +237,7 @@ struct FileListView: View {
         isCreatingFolder = false
     }
 
-    // MARK: - 菜单（空文件夹视图仍用 SwiftUI contextMenu）
-
-    @ViewBuilder
-    private var blankAreaContextMenu: some View {
-        Button("新建文件夹") {
-            startCreateFolder()
-        }
-
-        Button("粘贴") {
-            pasteFromClipboard()
-        }
-        .disabled(clipboardURLs.isEmpty)
-
-        Divider()
-
-        Button(showHiddenFiles ? "不显示隐藏项目" : "显示隐藏项目") {
-            showHiddenFiles.toggle()
-        }
-    }
+    // MARK: - 菜单（空白区域由 menuItems(for: nil) 提供，NSTableView menuProvider 构建）
 
     private func pasteFromClipboard() {
         guard !clipboardURLs.isEmpty else { return }
