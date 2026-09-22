@@ -409,6 +409,8 @@ struct FileListTableView: NSViewRepresentable {
             coordinator.files = files
             coordinator.filesKey = key
             coordinator.table?.reloadData()
+            // 空文件夹时隐藏行分隔线，占位符更干净
+            coordinator.table?.gridStyleMask = files.isEmpty ? [] : .solidHorizontalGridLineMask
         }
 
         let cutKey = cutURLs.map(\.path).sorted().joined(separator: "|")
