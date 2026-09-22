@@ -216,7 +216,7 @@ struct DuoXploreApp: App {
                     fsService.moveToTrash(urls)
                     files = (try? fsService.listDirectory(at: currentURL, showHidden: showHiddenFiles)) ?? []
                 }
-                .keyboardShortcut(.delete, modifiers: [])
+                .keyboardShortcut(.delete, modifiers: .command)
             }
         }
 

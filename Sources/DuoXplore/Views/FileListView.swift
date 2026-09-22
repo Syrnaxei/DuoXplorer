@@ -287,7 +287,7 @@ struct FileListView: View {
             .divider,
             FileMenuItem("复制路径") { fsService.copyPath(file.url) },
             .divider,
-            FileMenuItem("移到废纸篓", keyEquivalent: String(UnicodeScalar(NSDeleteFunctionKey)!)) {
+            FileMenuItem("移到废纸篓", keyEquivalent: String(UnicodeScalar(0x232B)!), keyEquivalentModifierMask: .command) {
                 let urls = selectedURLs.isEmpty ? [file.url] : Array(selectedURLs)
                 fsService.moveToTrash(urls)
                 onRefresh()
@@ -302,12 +302,14 @@ struct FileListView: View {
 @MainActor struct FileMenuItem {
     let title: String
     let keyEquivalent: String?
+    let keyEquivalentModifierMask: NSEvent.ModifierFlags
     let enabled: Bool
     let action: () -> Void
 
-    init(_ title: String, keyEquivalent: String? = nil, enabled: Bool = true, action: @escaping () -> Void) {
+    init(_ title: String, keyEquivalent: String? = nil, keyEquivalentModifierMask: NSEvent.ModifierFlags = [], enabled: Bool = true, action: @escaping () -> Void) {
         self.title = title
         self.keyEquivalent = keyEquivalent
+        self.keyEquivalentModifierMask = keyEquivalentModifierMask
         self.enabled = enabled
         self.action = action
     }
@@ -691,6 +693,7 @@ struct FileListTableView: NSViewRepresentable {
                     )
                     item.target = self
                     item.isEnabled = spec.enabled
+                    item.keyEquivalentModifierMask = spec.keyEquivalentModifierMask
                     item.representedObject = MenuActionBox(action: spec.action)
                     menu.addItem(item)
                 }
