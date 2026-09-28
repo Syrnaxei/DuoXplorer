@@ -30,36 +30,6 @@ struct FileListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 新文件夹输入行（全局）
-            if isCreatingFolder {
-                HStack(spacing: 0) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder.badge.plus")
-                            .resizable().frame(width: 20, height: 16)
-                            .foregroundColor(.accentColor)
-                        TextField("新建文件夹名称", text: $newFolderText)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 13))
-                            .focused($newFolderFieldFocused)
-                            .onSubmit { commitCreateFolder() }
-                            .onExitCommand { isCreatingFolder = false }
-                            .onAppear {
-                                newFolderText = "新建文件夹"
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                    newFolderFieldFocused = true
-                                }
-                            }
-                    }
-                    .frame(minWidth: 200, alignment: .leading)
-                    .padding(.leading, 36)
-                    Spacer()
-                }
-                .padding(.vertical, 5)
-                .padding(.horizontal, 8)
-                .background(Color.accentColor.opacity(0.08))
-                Divider()
-            }
-
             // 列标题
             HeaderRow(
                 sortOption: $sortOption,
@@ -67,6 +37,32 @@ struct FileListView: View {
             )
 
             Divider()
+
+            // 新文件夹输入行：与表格首行同样的行高与缩进，视觉上就是列表的第一行
+            if isCreatingFolder {
+                HStack(spacing: 6) {
+                    Image(systemName: "folder.badge.plus")
+                        .resizable().scaledToFit()
+                        .frame(width: 20, height: 20)
+                        .foregroundColor(.accentColor)
+                    TextField("新建文件夹名称", text: $newFolderText)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13))
+                        .focused($newFolderFieldFocused)
+                        .onSubmit { commitCreateFolder() }
+                        .onExitCommand { isCreatingFolder = false }
+                        .onAppear {
+                            newFolderText = "新建文件夹"
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                newFolderFieldFocused = true
+                            }
+                        }
+                    Spacer()
+                }
+                .padding(.leading, 8)
+                .frame(height: 28)
+                Divider()
+            }
 
             // 文件列表（空文件夹也保持表格挂载：接收拖放、安装键盘监听、复用空白区右键菜单）
             FileListTableView(
@@ -148,21 +144,20 @@ struct FileListView: View {
 
     private func handleKey(event: NSEvent) -> NSEvent? {
         // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时，按键交给输入框原生处理；
-        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持用户在设置里定义的三个动作
+        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持内置的三个表格动作
         if NSApp.keyWindow?.firstResponder is NSTextView { return event }
         guard !isRenaming, !isCreatingFolder,
               let window = NSApp.keyWindow,
               event.window == window else { return event }
 
         // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
-        let store = ShortcutStore.shared
-        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .navigateUp)) {
+        if ShortcutAction.navigateUp.defaultCombo.matches(event) {
             guard currentURL.path != "/" else { return nil }
             onNavigate(currentURL.deletingLastPathComponent())
             return nil
         }
 
-        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .openItem)) {
+        if ShortcutAction.openItem.defaultCombo.matches(event) {
             // 回车打开
             if let url = selectedURLs.first,
                let file = files.first(where: { $0.url == url }) {
@@ -171,7 +166,7 @@ struct FileListView: View {
             }
             return nil
         }
-        if ShortcutStore.isMatch(event.keyCode, event.modifierFlags, store.combo(for: .renameItem)) {
+        if ShortcutAction.renameItem.defaultCombo.matches(event) {
             // 重命名
             if let url = selectedURLs.first, selectedURLs.count == 1 {
                 startRename(url)
