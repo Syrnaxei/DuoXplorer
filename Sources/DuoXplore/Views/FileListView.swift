@@ -11,6 +11,7 @@ struct FileListView: View {
     @Binding var clipboardIsCut: Bool
     @Binding var currentURL: URL
     @Binding var showHiddenFiles: Bool
+    @Binding var searchText: String
     let loadError: String?
     let isSearching: Bool
     let onNavigate: (URL) -> Void
@@ -51,6 +52,10 @@ struct FileListView: View {
                         .focused($newFolderFieldFocused)
                         .onSubmit { commitCreateFolder() }
                         .onExitCommand { isCreatingFolder = false }
+                        .onChange(of: newFolderFieldFocused) { focused in
+                            // 点击别处使输入框失焦 = 取消新建；不复位会卡住 isCreatingFolder，令所有表格快捷键失效
+                            if !focused, isCreatingFolder { isCreatingFolder = false }
+                        }
                         .onAppear {
                             newFolderText = "新建文件夹"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
@@ -89,6 +94,7 @@ struct FileListView: View {
                 menuItems: menuItems
             )
             .onAppear { installKeyboardMonitor() }
+            .onDisappear { removeKeyboardMonitor() }
             .overlay {
                 if files.isEmpty {
                     let (symbol, message): (String, String) = {
@@ -140,46 +146,91 @@ struct FileListView: View {
 
     // MARK: - 键盘事件监控
 
-    @State private var keyboardInstalled = false
+    @State private var keyboardMonitor: Any?
 
     private func handleKey(event: NSEvent) -> NSEvent? {
-        // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时，按键交给输入框原生处理；
-        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持内置的三个表格动作
-        if NSApp.keyWindow?.firstResponder is NSTextView { return event }
+        // 仅在主窗口内劫持（设置等辅助窗口聚焦时放行，避免后台误触发）；
+        // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时交给输入框原生处理；
+        // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持内置的表格动作
         guard !isRenaming, !isCreatingFolder,
-              let window = NSApp.keyWindow,
-              event.window == window else { return event }
+              let window = NSApp.mainWindow,
+              event.window === window else { return event }
+        if let editor = window.firstResponder as? NSTextView {
+            return handleTextEditingKey(event: event, editor: editor, window: window)
+        }
 
         // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
         if ShortcutAction.navigateUp.defaultCombo.matches(event) {
-            guard currentURL.path != "/" else { return nil }
+            guard currentURL.path != "/" else { return event }
+            let previous = currentURL
             onNavigate(currentURL.deletingLastPathComponent())
+            // Finder 行为：返回上级后选中刚离开的文件夹
+            selectedURLs = [previous]
             return nil
         }
 
         if ShortcutAction.openItem.defaultCombo.matches(event) {
-            // 回车打开
-            if let url = selectedURLs.first,
-               let file = files.first(where: { $0.url == url }) {
-                if file.isDirectory { onNavigate(file.url) }
-                else { fsService.openFile(file.url) }
-            }
+            // 无选中项时不吞按键，避免干扰侧边栏等视图的原生行为
+            guard let url = selectedURLs.first,
+                  let file = files.first(where: { $0.url == url }) else { return event }
+            if file.isDirectory { onNavigate(file.url) }
+            else { fsService.openFile(file.url) }
             return nil
         }
         if ShortcutAction.renameItem.defaultCombo.matches(event) {
-            // 重命名
-            if let url = selectedURLs.first, selectedURLs.count == 1 {
-                startRename(url)
-            }
+            guard let url = selectedURLs.first, selectedURLs.count == 1 else { return event }
+            startRename(url)
+            return nil
+        }
+        if ShortcutAction.newFolder.defaultCombo.matches(event) {
+            startCreateFolder()
             return nil
         }
         return event
     }
 
-    func installKeyboardMonitor() {
-        guard !keyboardInstalled else { return }
-        keyboardInstalled = true
-        NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: handleKey)
+    private func installKeyboardMonitor() {
+        guard keyboardMonitor == nil else { return }
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: handleKey)
+    }
+
+    private func removeKeyboardMonitor() {
+        if let monitor = keyboardMonitor { NSEvent.removeMonitor(monitor) }
+        keyboardMonitor = nil
+    }
+
+    /// 搜索框聚焦时接管两个 Finder 行为：Esc 退出搜索并把焦点还给列表，
+    /// ↓ 跳进结果列表选中首项；其余按键（含 IME 组合中）全部交给输入框
+    private func handleTextEditingKey(event: NSEvent, editor: NSTextView, window: NSWindow) -> NSEvent? {
+        guard editor.delegate is NSSearchField, !editor.hasMarkedText() else { return event }
+        switch event.keyCode {
+        case 53: // Esc
+            searchText = ""
+            makeFileTableFirstResponder(in: window)
+            return nil
+        case 125: // ↓
+            guard let first = files.first else { return event }
+            selectedURLs = [first.url]
+            makeFileTableFirstResponder(in: window)
+            return nil
+        default:
+            return event
+        }
+    }
+
+    private func makeFileTableFirstResponder(in window: NSWindow) {
+        func find(_ view: NSView) -> NSTableView? {
+            if view is NSTableView, view.accessibilityIdentifier() == "FileList" {
+                return view as? NSTableView
+            }
+            for sub in view.subviews {
+                if let table = find(sub) { return table }
+            }
+            return nil
+        }
+        if let contentView = window.contentView, let table = find(contentView) {
+            window.makeFirstResponder(table)
+        }
     }
 
     // MARK: - 重命名
@@ -250,7 +301,7 @@ struct FileListView: View {
     private func menuItems(for file: FileItem?) -> [FileMenuItem] {
         guard let file else {
             return [
-                FileMenuItem("新建文件夹") { startCreateFolder() },
+                FileMenuItem("新建文件夹", keyEquivalent: "N", keyEquivalentModifierMask: [.command, .shift]) { startCreateFolder() },
                 FileMenuItem("粘贴", enabled: !clipboardURLs.isEmpty) { pasteFromClipboard() },
                 .divider,
                 FileMenuItem("在终端中打开") { fsService.openInTerminal(currentURL) },

@@ -60,6 +60,7 @@ struct MainContentView: View {
                     clipboardIsCut: $clipboardIsCut,
                     currentURL: $currentURL,
                     showHiddenFiles: $showHiddenFiles,
+                    searchText: $searchText,
                     loadError: loadError,
                     isSearching: !searchText.isEmpty,
                     onNavigate: { url in

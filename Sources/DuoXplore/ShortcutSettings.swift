@@ -36,21 +36,23 @@ struct KeyCombo: Equatable {
 // MARK: - 表格键盘动作（Finder 惯用键位，暂不支持自定义）
 
 enum ShortcutAction: String, CaseIterable {
-    case navigateUp, openItem, renameItem
+    case navigateUp, openItem, renameItem, newFolder
 
     var displayName: String {
         switch self {
         case .navigateUp: return "返回上级目录"
         case .openItem: return "打开选中项"
         case .renameItem: return "重命名"
+        case .newFolder: return "新建文件夹"
         }
     }
 
     var defaultCombo: KeyCombo {
         switch self {
         case .navigateUp: return KeyCombo(keyCode: 126, modifiers: [.command], label: "↑")  // ⌘↑
-        case .openItem: return KeyCombo(keyCode: 36, modifiers: [.command], label: "↩")     // ⌘↩
+        case .openItem: return KeyCombo(keyCode: 125, modifiers: [.command], label: "↓")    // ⌘↓
         case .renameItem: return KeyCombo(keyCode: 36, modifiers: [], label: "↩")           // Return
+        case .newFolder: return KeyCombo(keyCode: 45, modifiers: [.command, .shift], label: "N")  // ⇧⌘N
         }
     }
 }
@@ -63,6 +65,8 @@ struct ShortcutSettingsView: View {
         ("导航与查看", [
             ("返回上级目录", ShortcutAction.navigateUp.defaultCombo.display),
             ("打开选中项", ShortcutAction.openItem.defaultCombo.display),
+            ("后退", "⌘["),
+            ("前进", "⌘]"),
             ("搜索", "⌘F"),
             ("显示/隐藏隐藏项目", "⇧⌘."),
             ("全选", "⌘A"),
@@ -71,6 +75,8 @@ struct ShortcutSettingsView: View {
             ("复制", "⌘C"),
             ("剪切", "⌘X"),
             ("粘贴", "⌘V"),
+            ("复制路径", "⌥⌘C"),
+            ("新建文件夹", ShortcutAction.newFolder.defaultCombo.display),
             ("重命名", ShortcutAction.renameItem.defaultCombo.display),
             ("移到废纸篓", "⌘⌫"),
         ]),

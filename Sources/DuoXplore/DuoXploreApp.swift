@@ -172,6 +172,24 @@ struct DuoXploreApp: App {
             }
 
             CommandGroup(after: .toolbar) {
+                Button("后退") {
+                    if let url = navigationState.goBack(from: currentURL) {
+                        currentURL = url
+                        files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+                    }
+                }
+                .keyboardShortcut("[", modifiers: .command)
+                .disabled(!navigationState.canGoBack())
+
+                Button("前进") {
+                    if let url = navigationState.goForward(from: currentURL) {
+                        currentURL = url
+                        files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+                    }
+                }
+                .keyboardShortcut("]", modifiers: .command)
+                .disabled(!navigationState.canGoForward())
+
                 Button(showHiddenFiles ? "隐藏隐藏项目" : "显示隐藏项目") {
                     showHiddenFiles.toggle()
                 }
@@ -208,6 +226,16 @@ struct DuoXploreApp: App {
                     NSApp.sendAction(Selector(("selectAll:")), to: nil, from: nil)
                 }
                 .keyboardShortcut("a", modifiers: .command)
+
+                Divider()
+
+                Button("复制路径") {
+                    if let url = selectedURLs.first {
+                        fsService.copyPath(url)
+                    }
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
+                .disabled(selectedURLs.count != 1)
 
                 Divider()
 

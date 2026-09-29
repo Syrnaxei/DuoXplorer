@@ -15,8 +15,9 @@ final class ShortcutTests: XCTestCase {
 
     func testDefaultCombosAreFinderConventions() {
         XCTAssertEqual(ShortcutAction.navigateUp.defaultCombo.display, "⌘↑")
-        XCTAssertEqual(ShortcutAction.openItem.defaultCombo.display, "⌘↩")
-        XCTAssertEqual(ShortcutAction.openItem.defaultCombo, KeyCombo(keyCode: 36, modifiers: [.command], label: "↩"))
+        XCTAssertEqual(ShortcutAction.openItem.defaultCombo.display, "⌘↓")
+        XCTAssertEqual(ShortcutAction.openItem.defaultCombo, KeyCombo(keyCode: 125, modifiers: [.command], label: "↓"))
         XCTAssertEqual(ShortcutAction.renameItem.defaultCombo.display, "↩")
+        XCTAssertEqual(ShortcutAction.newFolder.defaultCombo.display, "⇧⌘N")
     }
 }
