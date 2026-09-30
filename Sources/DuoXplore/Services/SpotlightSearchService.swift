@@ -26,9 +26,22 @@ final class SpotlightSearchService: ObservableObject {
         }
         self.folder = folder
         self.fallback = fallback
-        let work = DispatchWorkItem { [weak self] in self?.startQuery(text: text) }
+        self.text = text
+        let predicate = NSPredicate(format: "kMDItemFSName CONTAINS[cd] %@", text)
+        let work = DispatchWorkItem { [weak self] in self?.startQuery(predicate: predicate) }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.debounceInterval, execute: work)
+    }
+
+    /// 按颜色标签全局检索（不设 scope = 本机全部已索引位置，同 Finder「此 Mac」）
+    func searchTag(_ tag: FinderTag) {
+        pending?.cancel()
+        tearDownQuery()
+        folder = nil
+        fallback = nil
+        text = ""
+        usedFallback = false
+        startQuery(predicate: FinderTag.predicate(for: tag.name))
     }
 
     func stop() {
@@ -38,14 +51,12 @@ final class SpotlightSearchService: ObservableObject {
         usedFallback = false
     }
 
-    private func startQuery(text: String) {
+    private func startQuery(predicate: NSPredicate) {
         tearDownQuery()
-        guard let folder else { return }
-        self.text = text
 
         let q = NSMetadataQuery()
-        q.searchScopes = [folder.path]
-        q.predicate = NSPredicate(format: "kMDItemFSName CONTAINS[cd] %@", text)
+        if let folder { q.searchScopes = [folder.path] }
+        q.predicate = predicate
 
         let center = NotificationCenter.default
         let names: [Notification.Name] = [

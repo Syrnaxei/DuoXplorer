@@ -1,6 +1,6 @@
 # DuoXplore
 
-一个用 SwiftUI 构建的 macOS 文件管理器，风格类似 Finder，支持树形侧边栏、面包屑导航、多选、内联重命名等功能。
+一个用 SwiftUI 构建的 macOS 文件管理器，风格类似 Finder，支持颜色标签、面包屑导航、多选、内联重命名等功能。
 
 开发流程（环境准备、日常构建、代码规范、发布与升级）见 [docs/development-guide.md](docs/development-guide.md)。
 
@@ -13,7 +13,7 @@
 | | Finder | DuoXplore |
 |---|---|---|
 | **地址栏** | 右键 Option 才能看到路径，复制不方便 | 点击空白即切换为可编辑路径，自动全选，一键复制 |
-| **目录树** | 侧边栏仅收藏夹，无完整目录树 | 完整目录树，根节点直达 /、/Users、/Applications |
+| **侧边栏** | 仅收藏夹 | 常用位置直达 + 颜色标签快速过滤 |
 | **排序** | 分组 + 排序混合，不可按列头切换 | 四列表格，点击列头一键切换排序方向和字段 |
 | **键盘操作** | 仅 Enter 打开、Space 预览 | 全键盘：↑↓ 导航、Enter 打开、Backspace 返回上级、F2 重命名 |
 | **多列信息** | 需切换为列表视图，且不显示类型 | 名称、日期、类型、大小四列同时可见 |
@@ -23,7 +23,8 @@
 
 ## 功能
 
-- **侧边栏目录树** — 异步加载，支持展开/折叠子文件夹
+- **侧边栏** — 个人目录/应用程序/用户/Macintosh HD 一键直达
+- **颜色标签** — 侧边栏红/橙/黄/绿/蓝/紫/灰标签全局过滤，「所有标签...」页集中浏览
 - **可编辑地址栏** — 点击空白区域切换为文本输入，自动全选，支持复制/粘贴路径，Enter 导航、Esc 取消
 - **文件列表** — 名称/修改日期/类型/大小四列，支持点击列头排序
 - **搜索过滤** — 实时搜索当前目录下的文件
@@ -125,15 +126,17 @@ DuoXplore/
     ├── Models/
     │   ├── FileItem.swift        # 文件/文件夹数据模型
     │   ├── SortOptions.swift     # 排序选项与方向
-    │   └── TreeNode.swift        # 侧边栏树节点（异步）
+    │   └── FinderTag.swift       # Finder 系统颜色标签
     ├── Services/
     │   ├── FileSystemService.swift # 文件操作服务层
+    │   ├── SpotlightSearchService.swift # Spotlight 搜索/标签检索
     │   └── NavigationState.swift   # 前进/后退导航栈
     └── Views/
         ├── MainContentView.swift  # 主区域整合
         ├── BreadcrumbBar.swift    # 面包屑地址栏
         ├── FileListView.swift     # 文件列表 + 右键菜单
-        └── SidebarTreeView.swift  # 侧边栏目录树
+        ├── AllTagsListView.swift  # 所有标签页标签列表
+        └── SidebarTagsView.swift  # 侧边栏颜色标签
 ```
 
 ## 技术栈

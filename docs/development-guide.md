@@ -83,7 +83,7 @@ open build/DuoXplore.app      # 本地直接运行（Universal）
 
 项目没有自动化测试，改动后按此清单点一遍（每条对应一个易碎路径）：
 
-- [ ] 侧边栏树展开/折叠，选中节点后主区内容跟随
+- [ ] 侧边栏常用位置点击后主区内容跟随；颜色标签点击后显示 Spotlight 结果；「所有标签...」页选标签切换结果；← 退出标签模式
 - [ ] 地址栏点击变输入框 → 输入 `~/Downloads` → Enter 导航；Esc 取消
 - [ ] 前进 / 后退 / 上一层 三个工具栏按钮，含边界（根目录 `/` 时「上一层」应置灰）
 - [ ] 列头点击切换排序字段与方向
@@ -112,15 +112,17 @@ Sources/DuoXplore/
 ├── Models/
 │   ├── FileItem.swift           # 文件模型（URL 派生属性、格式化展示）
 │   ├── SortOptions.swift        # SortOption / SortDirection
-│   └── TreeNode.swift           # 侧边栏节点，@Published children 异步懒加载
+│   └── FinderTag.swift          # Finder 系统颜色标签 + Spotlight 标签谓词
 ├── Services/
 │   ├── FileSystemService.swift  # 全部文件操作：列目录/新建/重命名/粘贴/废纸篓/reveal/剪贴板路径
+│   ├── SpotlightSearchService.swift # NSMetadataQuery：目录内搜索 / 标签全局检索
 │   └── NavigationState.swift    # 前进/后退双栈
 └── Views/
-    ├── MainContentView.swift    # 组合面包屑 + 搜索 + 列表 + 状态栏；持有目录 watcher
+    ├── MainContentView.swift    # 组合面包屑 + 搜索 + 列表 + 状态栏；持有目录 watcher 与标签模式
     ├── BreadcrumbBar.swift      # 可编辑地址栏
     ├── FileListView.swift       # 表格 + 右键菜单 + 内联重命名 + NSEvent 键盘监听（最大文件）
-    └── SidebarTreeView.swift    # 目录树
+    ├── AllTagsListView.swift    # 所有标签页的标签选择列
+    └── SidebarTagsView.swift    # 侧边栏常用位置 + 颜色标签（NSOutlineView source list）
 ```
 
 ### 3.1 状态流向（改 UI 前必读）
@@ -128,10 +130,11 @@ Sources/DuoXplore/
 单一 `Window` 场景，**没有全局 store**。所有应用级状态是 `DuoXploreApp` 的 `@State`，通过 `@Binding` 逐层下传；`MainContentView` 再传给 `FileListView`：
 
 ```
-DuoXploreApp (@State currentURL/files/selectedURLs/clipboard…/showHiddenFiles)
-   ├─ SidebarTreeView      —— 回调 onSelect：push 历史 + 改 currentURL + 重新列目录
+DuoXploreApp (@State currentURL/files/selectedURLs/clipboard…/showHiddenFiles/activeTag/allTagsMode)
+   ├─ SidebarTagsView      —— 回调 onSelect / onTagSelect / onAllTags：改导航或标签状态，主区随之切换
    └─ MainContentView      —— 持有 watcher / 搜索词 / 重命名与新建的局部 @State
         ├─ BreadcrumbBar   —— onNavigate 回调
+        ├─ AllTagsListView —— 所有标签页的标签选择（双向绑定 activeTag）
         └─ FileListView    —— 排序、点击、键盘、右键菜单
 ```
 
@@ -139,7 +142,7 @@ DuoXploreApp (@State currentURL/files/selectedURLs/clipboard…/showHiddenFiles)
 
 ### 3.2 关键实现约定
 
-- `@MainActor` 标注所有 `ObservableObject`（`TreeNode`、`NavigationState`），UI 更新不跨线程。
+- `@MainActor` 标注所有 `ObservableObject`（`SpotlightSearchService`、`NavigationState`），UI 更新不跨线程。
 - 文件操作一律走 `FileSystemService`，不要在 View 里重复实现 CRUD / 废纸篓 / reveal / 复制路径。
 - 目录监听复用 `MainContentView.startWatcher()` 的 `DispatchSource.makeFileSystemObjectSource` + `open(path, O_EVTONLY)` 模式；取消时 `close(fd)`。
 - 图标：通用 UI 用 SF Symbols，真实文件图标用 `NSWorkspace.shared.icon(forFile:)`。

@@ -60,6 +60,8 @@ struct DuoXploreApp: App {
     @State private var clipboardURLs: [URL] = []
     @State private var clipboardIsCut = false
     @State private var showHiddenFiles = false
+    @State private var activeTag: FinderTag?
+    @State private var allTagsMode = false
 
     private let fsService = FileSystemService()
 
@@ -122,18 +124,31 @@ struct DuoXploreApp: App {
     var body: some Scene {
         Window("DuoXplore", id: "main") {
             NavigationSplitView {
-                SidebarTreeView(
-                    roots: [
-                        TreeNode(url: URL(fileURLWithPath: "/Users/\(NSUserName())"), name: "个人目录"),
-                        TreeNode(url: URL(fileURLWithPath: "/Applications"), name: "应用程序"),
-                        TreeNode(url: URL(fileURLWithPath: "/Users"), name: "用户"),
-                        TreeNode(url: URL(fileURLWithPath: "/"), name: "Macintosh HD"),
+                SidebarTagsView(
+                    folders: [
+                        (name: "个人目录", url: URL(fileURLWithPath: "/Users/\(NSUserName())")),
+                        (name: "应用程序", url: URL(fileURLWithPath: "/Applications")),
+                        (name: "用户", url: URL(fileURLWithPath: "/Users")),
+                        (name: "Macintosh HD", url: URL(fileURLWithPath: "/")),
                     ],
+                    selectedTag: activeTag,
+                    allTagsMode: allTagsMode,
                     onSelect: { url in
+                        activeTag = nil
+                        allTagsMode = false
                         navigationState.push(currentURL)
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                         selectedURLs = []
+                    },
+                    onTagSelect: { tag in
+                        allTagsMode = false
+                        selectedURLs = []
+                        activeTag = tag
+                    },
+                    onAllTags: {
+                        selectedURLs = []
+                        allTagsMode = true
                     }
                 )
                 .frame(minWidth: 200)
@@ -148,6 +163,8 @@ struct DuoXploreApp: App {
                     clipboardURLs: $clipboardURLs,
                     clipboardIsCut: $clipboardIsCut,
                     showHiddenFiles: $showHiddenFiles,
+                    activeTag: $activeTag,
+                    allTagsMode: $allTagsMode,
                     navigationState: navigationState,
                     fsService: fsService
                 )
@@ -174,6 +191,8 @@ struct DuoXploreApp: App {
             CommandGroup(after: .toolbar) {
                 Button("后退") {
                     if let url = navigationState.goBack(from: currentURL) {
+                        activeTag = nil
+                        allTagsMode = false
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                     }
@@ -183,6 +202,8 @@ struct DuoXploreApp: App {
 
                 Button("前进") {
                     if let url = navigationState.goForward(from: currentURL) {
+                        activeTag = nil
+                        allTagsMode = false
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                     }

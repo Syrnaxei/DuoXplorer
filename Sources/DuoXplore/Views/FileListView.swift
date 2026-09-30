@@ -807,7 +807,7 @@ struct HeaderRow: View {
     var body: some View {
         HStack(spacing: 0) {
             HeaderCell(title: "名称", option: .name, sortOption: $sortOption, sortDirection: $sortDirection)
-                .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 100, maxWidth: .infinity, alignment: .leading)
             Divider().frame(height: 20)
             HeaderCell(title: "修改日期", option: .date, sortOption: $sortOption, sortDirection: $sortDirection)
                 .frame(width: 155)
