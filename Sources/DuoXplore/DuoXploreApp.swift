@@ -61,13 +61,16 @@ struct DuoXploreApp: App {
     @State private var clipboardIsCut = false
     @State private var showHiddenFiles = false
     @State private var activeTag: FinderTag?
-    @State private var allTagsMode = false
 
     private let fsService = FileSystemService()
 
+    /// 窗口标题：标签模式显示标签名，其余显示当前文件夹名
+    private var windowTitle: String {
+        activeTag?.name ?? currentURL.lastPathComponent
+    }
+
     /// 粘贴：剪切则移动（执行后清空），复制则保留（可多次粘贴）；取消时保留剪贴板
-    private func paste() {
-        guard !clipboardURLs.isEmpty else { return }
+    private func paste() {        guard !clipboardURLs.isEmpty else { return }
         let executed = fsService.pasteItems(clipboardURLs, to: currentURL, isCut: clipboardIsCut)
         if clipboardIsCut && executed {
             clipboardURLs = []
@@ -132,23 +135,16 @@ struct DuoXploreApp: App {
                         (name: "Macintosh HD", url: URL(fileURLWithPath: "/")),
                     ],
                     selectedTag: activeTag,
-                    allTagsMode: allTagsMode,
                     onSelect: { url in
                         activeTag = nil
-                        allTagsMode = false
                         navigationState.push(currentURL)
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                         selectedURLs = []
                     },
                     onTagSelect: { tag in
-                        allTagsMode = false
                         selectedURLs = []
                         activeTag = tag
-                    },
-                    onAllTags: {
-                        selectedURLs = []
-                        allTagsMode = true
                     }
                 )
                 .frame(minWidth: 200)
@@ -164,12 +160,12 @@ struct DuoXploreApp: App {
                     clipboardIsCut: $clipboardIsCut,
                     showHiddenFiles: $showHiddenFiles,
                     activeTag: $activeTag,
-                    allTagsMode: $allTagsMode,
                     navigationState: navigationState,
                     fsService: fsService
                 )
             }
             .navigationSplitViewStyle(.balanced)
+            .navigationTitle(windowTitle)
             .frame(minWidth: 800, minHeight: 500)
             .onAppear {
                 setAppIcon()
@@ -192,7 +188,6 @@ struct DuoXploreApp: App {
                 Button("后退") {
                     if let url = navigationState.goBack(from: currentURL) {
                         activeTag = nil
-                        allTagsMode = false
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                     }
@@ -203,7 +198,6 @@ struct DuoXploreApp: App {
                 Button("前进") {
                     if let url = navigationState.goForward(from: currentURL) {
                         activeTag = nil
-                        allTagsMode = false
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                     }

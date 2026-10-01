@@ -83,7 +83,7 @@ open build/DuoXplore.app      # 本地直接运行（Universal）
 
 项目没有自动化测试，改动后按此清单点一遍（每条对应一个易碎路径）：
 
-- [ ] 侧边栏常用位置点击后主区内容跟随；颜色标签点击后显示 Spotlight 结果；「所有标签...」页选标签切换结果；← 退出标签模式
+- [ ] 侧边栏常用位置点击后主区内容跟随；颜色标签点击后窗口标题显示标签名并列出 Spotlight 结果；点击常用位置或工具栏后退退出标签模式
 - [ ] 地址栏点击变输入框 → 输入 `~/Downloads` → Enter 导航；Esc 取消
 - [ ] 前进 / 后退 / 上一层 三个工具栏按钮，含边界（根目录 `/` 时「上一层」应置灰）
 - [ ] 列头点击切换排序字段与方向
@@ -121,7 +121,6 @@ Sources/DuoXplore/
     ├── MainContentView.swift    # 组合面包屑 + 搜索 + 列表 + 状态栏；持有目录 watcher 与标签模式
     ├── BreadcrumbBar.swift      # 可编辑地址栏
     ├── FileListView.swift       # 表格 + 右键菜单 + 内联重命名 + NSEvent 键盘监听（最大文件）
-    ├── AllTagsListView.swift    # 所有标签页的标签选择列
     └── SidebarTagsView.swift    # 侧边栏常用位置 + 颜色标签（NSOutlineView source list）
 ```
 
@@ -131,10 +130,9 @@ Sources/DuoXplore/
 
 ```
 DuoXploreApp (@State currentURL/files/selectedURLs/clipboard…/showHiddenFiles/activeTag/allTagsMode)
-   ├─ SidebarTagsView      —— 回调 onSelect / onTagSelect / onAllTags：改导航或标签状态，主区随之切换
+   ├─ SidebarTagsView      —— 回调 onSelect / onTagSelect：改导航或标签状态，主区随之切换
    └─ MainContentView      —— 持有 watcher / 搜索词 / 重命名与新建的局部 @State
         ├─ BreadcrumbBar   —— onNavigate 回调
-        ├─ AllTagsListView —— 所有标签页的标签选择（双向绑定 activeTag）
         └─ FileListView    —— 排序、点击、键盘、右键菜单
 ```
 

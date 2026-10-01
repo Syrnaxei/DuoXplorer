@@ -11,7 +11,6 @@ struct MainContentView: View {
     @Binding var clipboardIsCut: Bool
     @Binding var showHiddenFiles: Bool
     @Binding var activeTag: FinderTag?
-    @Binding var allTagsMode: Bool
     let navigationState: NavigationState
     let fsService: FileSystemService
 
@@ -24,8 +23,8 @@ struct MainContentView: View {
     @State private var watcherSource: DispatchSourceFileSystemObject?
     @StateObject private var spotlight = SpotlightSearchService()
 
-    /// 标签模式（所有标签页或直接按标签过滤）下显示 Spotlight 标签结果
-    private var tagActive: Bool { allTagsMode || activeTag != nil }
+    /// 标签模式下显示 Spotlight 标签结果
+    private var tagActive: Bool { activeTag != nil }
 
     /// 搜索时显示 Spotlight（或回退）结果，否则显示当前文件夹
     var displayedFiles: [FileItem] {
@@ -41,30 +40,13 @@ struct MainContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶栏：标签模式显示标签导航栏，否则面包屑
-            if tagActive {
-                tagBar
-                Divider()
-            } else {
+            // 顶栏：标签模式只看搜索结果，不显示面包屑
+            if !tagActive {
                 BreadcrumbBar(currentURL: $currentURL, onNavigate: { navigate(to: $0) })
                 Divider()
             }
 
-            // 内容区：所有标签页 = 左侧标签列表 + 结果列表
-            if allTagsMode {
-                HStack(spacing: 0) {
-                    AllTagsListView(selection: $activeTag)
-                        .frame(width: 170)
-                    Divider()
-                    if activeTag == nil {
-                        ContentUnavailableView("未选择标签", systemImage: "tag", description: Text("在左侧选择一个标签以查看文件"))
-                    } else {
-                        fileList
-                    }
-                }
-            } else {
-                fileList
-            }
+            fileList
 
             Divider()
 
@@ -78,15 +60,10 @@ struct MainContentView: View {
             selectedURLs = []
             searchText = ""
             guard let tag else {
-                if !allTagsMode { spotlight.stop() }
+                spotlight.stop()
                 return
             }
             spotlight.searchTag(tag)
-        }
-        .onChange(of: allTagsMode) { active in
-            selectedURLs = []
-            // 退出所有标签页时若仍选中了某个标签，保留其结果（等同侧边栏标签过滤）
-            if !active, activeTag == nil { spotlight.stop() }
         }
         .onChange(of: searchText) { text in
             guard !tagActive else { return }
@@ -133,33 +110,6 @@ struct MainContentView: View {
         }
     }
 
-    /// 标签模式顶栏（对应面包屑位置）
-    private var tagBar: some View {
-        HStack(spacing: 8) {
-            Button(action: exitTagMode) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .buttonStyle(.plain)
-            .help("返回")
-
-            if allTagsMode {
-                Text("所有标签")
-                    .font(.system(size: 13))
-            } else if let tag = activeTag {
-                Circle()
-                    .fill(Color(nsColor: tag.color))
-                    .frame(width: 10, height: 10)
-                Text("标签：\(tag.name)")
-                    .font(.system(size: 13))
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 28)
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-
     @ViewBuilder private var fileList: some View {
         if isLoading {
             Spacer()
@@ -191,18 +141,8 @@ struct MainContentView: View {
     /// 目录间导航：退出标签模式并加载目标文件夹
     private func navigate(to url: URL) {
         navigationState.push(currentURL)
-        allTagsMode = false
         activeTag = nil
         currentURL = url
-        loadFiles()
-    }
-
-    /// 退出标签模式，回到当前文件夹
-    private func exitTagMode() {
-        allTagsMode = false
-        activeTag = nil
-        selectedURLs = []
-        spotlight.stop()
         loadFiles()
     }
 
