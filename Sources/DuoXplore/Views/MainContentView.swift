@@ -31,20 +31,20 @@ struct MainContentView: View {
         tagActive || !searchText.isEmpty ? spotlight.items : files
     }
 
-    /// 状态栏统计
-    var selectedStats: (count: Int, size: Int64) {
-        let selected = displayedFiles.filter { selectedURLs.contains($0.url) }
-        let totalSize: Int64 = selected.reduce(0) { $0 + ($1.size ?? 0) }
-        return (selected.count, totalSize)
+    /// 状态栏统计：当前列表中的选中数量
+    var selectedCount: Int {
+        displayedFiles.filter { selectedURLs.contains($0.url) }.count
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            // 顶栏：标签模式只看搜索结果，不显示面包屑
-            if !tagActive {
+            // 顶栏：标签模式显示「全部标签 › 颜色」，普通模式显示路径面包屑
+            if let tag = activeTag {
+                tagBreadcrumb(tag)
+            } else {
                 BreadcrumbBar(currentURL: $currentURL, onNavigate: { navigate(to: $0) })
-                Divider()
             }
+            Divider()
 
             fileList
 
@@ -109,6 +109,33 @@ struct MainContentView: View {
                 .help("向上一层")
             }
         }
+    }
+
+    /// 标签模式的面包屑：全部标签 › 颜色名（仅展示，「全部标签」页已移除，不可点击）
+    private func tagBreadcrumb(_ tag: FinderTag) -> some View {
+        HStack(spacing: 4) {
+            Text("全部标签")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
+            Text("›")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(Color(tag.color))
+                    .frame(width: 10, height: 10)
+                Text(tag.name)
+                    .font(.system(size: 13))
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.accentColor.opacity(0.15))
+            .cornerRadius(4)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     @ViewBuilder private var fileList: some View {
@@ -176,8 +203,12 @@ struct MainContentView: View {
     }
 
     private var statusBar: some View {
-        HStack {
-            if tagActive || !searchText.isEmpty {
+        HStack(spacing: 4) {
+            if selectedCount > 0 {
+                Text("\(displayedFiles.count) 个项目，选中 \(selectedCount) 个")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            } else if tagActive || !searchText.isEmpty {
                 Text("\(displayedFiles.count) 个结果")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
@@ -185,18 +216,6 @@ struct MainContentView: View {
                 Text("\(files.count) 个项目")
                     .font(.system(size: 11))
                     .foregroundColor(.secondary)
-            }
-
-            if selectedStats.count > 0 {
-                Text("  |  已选 \(selectedStats.count) 个")
-                    .font(.system(size: 11))
-                    .foregroundColor(.accentColor)
-
-                if selectedStats.size > 0 {
-                    Text(ByteCountFormatter().string(fromByteCount: selectedStats.size))
-                        .font(.system(size: 11))
-                        .foregroundColor(.secondary)
-                }
             }
 
             Spacer()
