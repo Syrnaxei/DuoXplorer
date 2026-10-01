@@ -104,7 +104,8 @@ struct MainContentView: View {
                 }) {
                     Image(systemName: "arrow.up")
                 }
-                .disabled(currentURL.path == "/")
+                // 标签模式下 currentURL 是进入标签前的残留目录，向上一层无意义
+                .disabled(tagActive || currentURL.path == "/")
                 .help("向上一层")
             }
         }
@@ -128,6 +129,7 @@ struct MainContentView: View {
                 searchText: $searchText,
                 loadError: loadError,
                 isSearching: tagActive || !searchText.isEmpty,
+                isTagFilterActive: tagActive,
                 onNavigate: { navigate(to: $0) },
                 fsService: fsService,
                 isRenaming: $isRenaming,

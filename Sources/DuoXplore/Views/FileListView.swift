@@ -14,6 +14,7 @@ struct FileListView: View {
     @Binding var searchText: String
     let loadError: String?
     let isSearching: Bool
+    let isTagFilterActive: Bool
     let onNavigate: (URL) -> Void
     let fsService: FileSystemService
     @Binding var isRenaming: Bool
@@ -159,9 +160,10 @@ struct FileListView: View {
             return handleTextEditingKey(event: event, editor: editor, window: window)
         }
 
-        // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）
+        // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）；
+        // 标签模式下 currentURL 是进入标签前的残留目录，向上一层无意义
         if ShortcutAction.navigateUp.defaultCombo.matches(event) {
-            guard currentURL.path != "/" else { return event }
+            guard !isTagFilterActive, currentURL.path != "/" else { return event }
             let previous = currentURL
             onNavigate(currentURL.deletingLastPathComponent())
             // Finder 行为：返回上级后选中刚离开的文件夹
