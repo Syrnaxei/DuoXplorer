@@ -1,34 +1,35 @@
 import Foundation
 
+/// 历史条目：真实目录或颜色标签页（标签页视为一种「位置」参与前进/后退）
+enum NavLocation: Equatable {
+    case folder(URL)
+    case tag(FinderTag)
+}
+
 /// 导航状态管理 — 前进/后退历史
 @MainActor
 final class NavigationState: ObservableObject {
 
-    private var backStack: [URL] = []
-    private var forwardStack: [URL] = []
+    private var backStack: [NavLocation] = []
+    private var forwardStack: [NavLocation] = []
 
-    func push(_ url: URL) {
-        backStack.append(url)
+    func push(_ location: NavLocation) {
+        backStack.append(location)
         forwardStack.removeAll()
     }
 
-    func goBack(from current: URL) -> URL? {
+    func goBack(from current: NavLocation) -> NavLocation? {
         guard !backStack.isEmpty else { return nil }
         forwardStack.append(current)
-        let previous = backStack.removeLast()
-        return previous
+        return backStack.removeLast()
     }
 
-    func goForward(from current: URL) -> URL? {
+    func goForward(from current: NavLocation) -> NavLocation? {
         guard !forwardStack.isEmpty else { return nil }
         backStack.append(current)
-        let next = forwardStack.removeLast()
-        return next
+        return forwardStack.removeLast()
     }
 
     func canGoBack() -> Bool { !backStack.isEmpty }
     func canGoForward() -> Bool { !forwardStack.isEmpty }
-
-    var backCount: Int { backStack.count }
-    var forwardCount: Int { forwardStack.count }
 }

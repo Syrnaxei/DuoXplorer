@@ -64,6 +64,24 @@ struct DuoXploreApp: App {
 
     private let fsService = FileSystemService()
 
+    /// 当前位置：标签模式下视为标签页，否则是目录
+    private var currentLocation: NavLocation {
+        if let tag = activeTag { return .tag(tag) }
+        return .folder(currentURL)
+    }
+
+    /// 应用历史条目（前进/后退）：恢复标签查询或加载目录；栈操作已由 goBack/goForward 完成，不再 push
+    private func applyLocation(_ location: NavLocation) {
+        switch location {
+        case .tag(let tag):
+            activeTag = tag
+        case .folder(let url):
+            activeTag = nil
+            currentURL = url
+            files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+        }
+    }
+
     /// 窗口标题：标签模式显示标签名，其余显示当前文件夹名
     private var windowTitle: String {
         activeTag?.name ?? currentURL.lastPathComponent
@@ -136,13 +154,14 @@ struct DuoXploreApp: App {
                     ],
                     selectedTag: activeTag,
                     onSelect: { url in
+                        navigationState.push(currentLocation)
                         activeTag = nil
-                        navigationState.push(currentURL)
                         currentURL = url
                         files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
                         selectedURLs = []
                     },
                     onTagSelect: { tag in
+                        navigationState.push(currentLocation)
                         selectedURLs = []
                         activeTag = tag
                     }
@@ -186,20 +205,16 @@ struct DuoXploreApp: App {
 
             CommandGroup(after: .toolbar) {
                 Button("后退") {
-                    if let url = navigationState.goBack(from: currentURL) {
-                        activeTag = nil
-                        currentURL = url
-                        files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+                    if let location = navigationState.goBack(from: currentLocation) {
+                        applyLocation(location)
                     }
                 }
                 .keyboardShortcut("[", modifiers: .command)
                 .disabled(!navigationState.canGoBack())
 
                 Button("前进") {
-                    if let url = navigationState.goForward(from: currentURL) {
-                        activeTag = nil
-                        currentURL = url
-                        files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+                    if let location = navigationState.goForward(from: currentLocation) {
+                        applyLocation(location)
                     }
                 }
                 .keyboardShortcut("]", modifiers: .command)

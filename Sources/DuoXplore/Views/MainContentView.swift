@@ -80,8 +80,8 @@ struct MainContentView: View {
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: {
-                    if let url = navigationState.goBack(from: currentURL) {
-                        navigate(to: url)
+                    if let location = navigationState.goBack(from: currentLocation) {
+                        apply(location)
                     }
                 }) {
                     Image(systemName: "chevron.left")
@@ -90,8 +90,8 @@ struct MainContentView: View {
                 .help("后退")
 
                 Button(action: {
-                    if let url = navigationState.goForward(from: currentURL) {
-                        navigate(to: url)
+                    if let location = navigationState.goForward(from: currentLocation) {
+                        apply(location)
                     }
                 }) {
                     Image(systemName: "chevron.right")
@@ -140,9 +140,27 @@ struct MainContentView: View {
         }
     }
 
+    /// 当前位置：标签模式下视为标签页，否则是目录
+    private var currentLocation: NavLocation {
+        if let tag = activeTag { return .tag(tag) }
+        return .folder(currentURL)
+    }
+
+    /// 应用历史条目（前进/后退）：恢复标签查询或加载目录；栈操作已由 goBack/goForward 完成，不再 push
+    private func apply(_ location: NavLocation) {
+        switch location {
+        case .tag(let tag):
+            activeTag = tag
+        case .folder(let url):
+            activeTag = nil
+            currentURL = url
+            loadFiles()
+        }
+    }
+
     /// 目录间导航：退出标签模式并加载目标文件夹
     private func navigate(to url: URL) {
-        navigationState.push(currentURL)
+        navigationState.push(currentLocation)
         activeTag = nil
         currentURL = url
         loadFiles()
