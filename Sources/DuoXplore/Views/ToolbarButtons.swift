@@ -126,3 +126,56 @@ struct ToolbarShareButton: NSViewRepresentable {
         }
     }
 }
+
+// MARK: - 原生搜索框（NSSearchField：自带放大镜/清除按钮/聚焦环）
+
+/// 展开时自动聚焦；Esc 触发 onCollapse。宽度由 SwiftUI 外层 frame 动画控制
+struct NativeSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let expanded: Bool
+    let onCollapse: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = "搜索"
+        field.sendsSearchStringImmediately = true
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.textChanged)
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.parent = self
+        if field.stringValue != text {
+            field.stringValue = text
+        }
+        if expanded != context.coordinator.wasExpanded {
+            context.coordinator.wasExpanded = expanded
+            if expanded {
+                DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
+            }
+        }
+    }
+
+    @MainActor final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var parent: NativeSearchField
+        var wasExpanded = false
+
+        init(_ parent: NativeSearchField) { self.parent = parent }
+
+        @objc func textChanged(_ sender: NSSearchField) {
+            parent.text = sender.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+                parent.onCollapse()
+                return true
+            }
+            return false
+        }
+    }
+}

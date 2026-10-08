@@ -18,7 +18,6 @@ struct MainContentView: View {
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var searchExpanded = false
-    @FocusState private var searchFocused: Bool
     @State private var isRenaming = false
     @State private var renameTarget: URL?
     @State private var renameText = ""
@@ -152,40 +151,32 @@ struct MainContentView: View {
                 .padding(.horizontal, 4)
             }
 
-            // Finder 式搜索：默认折叠为放大镜，点击展开输入框，左侧 » 收回
+            // Finder 式搜索：默认折叠为放大镜，点击展开带放大镜前缀的输入框，左侧 » 收回
             ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 4) {
-                    if searchExpanded {
-                        Button {
+                HStack(spacing: 2) {
+                    Button {
+                        if searchExpanded {
                             collapseSearch()
-                        } label: {
-                            Image(systemName: "chevron.right.2")
+                        } else {
+                            withAnimation(.easeInOut(duration: 0.18)) { searchExpanded = true }
                         }
-                        .help("收回")
-
-                        TextField("搜索", text: $searchText)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 180)
-                            .focused($searchFocused)
-                            .onSubmit { if searchText.isEmpty { collapseSearch() } }
-                            .onExitCommand { collapseSearch() }
-                            .transition(.opacity)
-                    } else {
-                        Button {
-                            searchExpanded = true
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
-                        .help("搜索")
+                    } label: {
+                        Image(systemName: searchExpanded ? "chevron.right.2" : "magnifyingglass")
                     }
+                    .help(searchExpanded ? "收回" : "搜索")
+                    .padding(.leading, 8)
+
+                    NativeSearchField(text: $searchText, expanded: searchExpanded) {
+                        collapseSearch()
+                    }
+                    .frame(width: 150)
+                    .frame(width: searchExpanded ? 150 : 0, alignment: .leading)
+                    .opacity(searchExpanded ? 1 : 0)
+                    .allowsHitTesting(searchExpanded)
+                    .clipped()
                 }
                 .animation(.easeInOut(duration: 0.18), value: searchExpanded)
             }
-        }
-        .onChange(of: searchExpanded) { expanded in
-            guard expanded else { return }
-            // TextField 本帧才挂载，延迟一拍才能拿到焦点
-            DispatchQueue.main.async { searchFocused = true }
         }
     }
 
