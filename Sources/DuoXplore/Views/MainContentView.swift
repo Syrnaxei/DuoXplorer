@@ -6,6 +6,7 @@ struct MainContentView: View {
     @Binding var files: [FileItem]
     @Binding var sortOption: SortOption
     @Binding var sortDirection: SortDirection
+    @State var groupDimension: GroupDimension = .none
     @Binding var selectedURLs: Set<URL>
     @Binding var clipboardURLs: [URL]
     @Binding var clipboardIsCut: Bool
@@ -16,11 +17,14 @@ struct MainContentView: View {
 
     @State private var isLoading = false
     @State private var searchText = ""
+    @State private var searchExpanded = false
+    @FocusState private var searchFocused: Bool
     @State private var isRenaming = false
     @State private var renameTarget: URL?
     @State private var renameText = ""
     @State private var loadError: String?
     @State private var watcherSource: DispatchSourceFileSystemObject?
+    @State private var listMenuProvider: ((FileItem?) -> [FileMenuItem])?
     @StateObject private var spotlight = SpotlightSearchService()
 
     /// 标签模式下显示 Spotlight 标签结果
@@ -76,7 +80,6 @@ struct MainContentView: View {
                 files.filter { $0.name.localizedCaseInsensitiveContains(t) }
             }
         }
-        .searchable(text: $searchText, placement: .toolbar, prompt: "搜索")
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
                 Button(action: {
@@ -108,7 +111,120 @@ struct MainContentView: View {
                 .disabled(tagActive || currentURL.path == "/")
                 .help("向上一层")
             }
+
+            // 右上角功能区：分组方式（分享/标签/菜单按钮在后续切片）
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Picker("分组方式", selection: $groupDimension) {
+                        ForEach(GroupDimension.allCases) { dimension in
+                            Text(dimension.rawValue).tag(dimension)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                } label: {
+                    Image(systemName: "square.grid.2x2")
+                }
+                // 搜索/标签模式下不分组，与列表行为一致
+                .disabled(tagActive || !searchText.isEmpty)
+                .help("分组方式")
+                .padding(.horizontal, 4)
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarShareButton(isEnabled: !selectedURLs.isEmpty) {
+                    selectedFiles.map(\.url)
+                }
+                .padding(.horizontal, 4)
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarMenuButton(symbol: "tag", helpText: "标签", isEnabled: !selectedURLs.isEmpty) {
+                    tagMenuItems()
+                }
+                .padding(.horizontal, 4)
+            }
+
+            ToolbarItem(placement: .primaryAction) {
+                ToolbarMenuButton(symbol: "ellipsis.circle", helpText: "更多", isEnabled: true) {
+                    listMenuProvider?(selectedFiles.first) ?? []
+                }
+                .padding(.horizontal, 4)
+            }
+
+            // Finder 式搜索：默认折叠为放大镜，点击展开输入框，左侧 » 收回
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 4) {
+                    if searchExpanded {
+                        Button {
+                            collapseSearch()
+                        } label: {
+                            Image(systemName: "chevron.right.2")
+                        }
+                        .help("收回")
+
+                        TextField("搜索", text: $searchText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                            .focused($searchFocused)
+                            .onSubmit { if searchText.isEmpty { collapseSearch() } }
+                            .onExitCommand { collapseSearch() }
+                            .transition(.opacity)
+                    } else {
+                        Button {
+                            searchExpanded = true
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                        }
+                        .help("搜索")
+                    }
+                }
+                .animation(.easeInOut(duration: 0.18), value: searchExpanded)
+            }
         }
+        .onChange(of: searchExpanded) { expanded in
+            guard expanded else { return }
+            // TextField 本帧才挂载，延迟一拍才能拿到焦点
+            DispatchQueue.main.async { searchFocused = true }
+        }
+    }
+
+    private func collapseSearch() {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            searchText = ""
+            searchExpanded = false
+        }
+    }
+
+    /// 当前列表中选中的文件（保持显示顺序）
+    private var selectedFiles: [FileItem] {
+        displayedFiles.filter { selectedURLs.contains($0.url) }
+    }
+
+    /// 标签菜单：7 个系统颜色标签，勾选态 = 所有选中对象共同拥有的标签
+    private func tagMenuItems() -> [FileMenuItem] {
+        let files = selectedFiles
+        guard !files.isEmpty else { return [] }
+        return FinderTag.all.map { tag in
+            let common = files.allSatisfy { ($0.tags ?? []).contains(tag.name) }
+            return FileMenuItem(tag.name, state: common ? .on : .off) {
+                toggleTag(tag, on: files)
+            }
+        }
+    }
+
+    /// 勾选/取消标签后写回并刷新（分组激活时重新归组）
+    private func toggleTag(_ tag: FinderTag, on files: [FileItem]) {
+        for file in files {
+            var tags = file.tags ?? []
+            if let index = tags.firstIndex(of: tag.name) {
+                tags.remove(at: index)
+            } else {
+                tags.append(tag.name)
+            }
+            fsService.writeTags(tags, to: file.url)
+        }
+        refresh()
     }
 
     /// 标签模式的面包屑：全部标签 › 颜色名（仅展示，「全部标签」页已移除，不可点击）
@@ -148,6 +264,7 @@ struct MainContentView: View {
                 files: Binding(get: { displayedFiles }, set: { files = $0 }),
                 sortOption: $sortOption,
                 sortDirection: $sortDirection,
+                groupDimension: $groupDimension,
                 selectedURLs: $selectedURLs,
                 clipboardURLs: $clipboardURLs,
                 clipboardIsCut: $clipboardIsCut,
@@ -162,7 +279,8 @@ struct MainContentView: View {
                 isRenaming: $isRenaming,
                 renameTarget: $renameTarget,
                 renameText: $renameText,
-                onRefresh: { refresh() }
+                onRefresh: { refresh() },
+                registerMenuProvider: { listMenuProvider = $0 }
             )
         }
     }

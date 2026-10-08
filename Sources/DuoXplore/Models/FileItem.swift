@@ -8,6 +8,10 @@ struct FileItem: Identifiable, Equatable {
     let isDirectory: Bool
     let size: Int64?
     let modificationDate: Date?
+    let createdDate: Date?
+    let addedDate: Date?
+    let lastUsedDate: Date?
+    let tags: [String]?
     let fileExtension: String
 
     init(url: URL) {
@@ -18,11 +22,34 @@ struct FileItem: Identifiable, Equatable {
         let resourceValues = try? url.resourceValues(forKeys: [
             .fileSizeKey,
             .contentModificationDateKey,
-            .isDirectoryKey
+            .isDirectoryKey,
+            .creationDateKey,
+            .addedToDirectoryDateKey,
+            .contentAccessDateKey,
+            .tagNamesKey,
         ])
 
         self.size = resourceValues?.fileSize.map(Int64.init)
         self.modificationDate = resourceValues?.contentModificationDate
+        self.createdDate = resourceValues?.creationDate
+        self.addedDate = resourceValues?.addedToDirectoryDate
+        self.lastUsedDate = resourceValues?.contentAccessDate
+        self.tags = resourceValues?.tagNames
+        self.fileExtension = url.pathExtension
+    }
+
+    /// 测试与 Spotlight 场景用的显式构造：不探测文件系统
+    init(url: URL, size: Int64?, modificationDate: Date?, createdDate: Date? = nil,
+         addedDate: Date? = nil, lastUsedDate: Date? = nil, tags: [String]? = nil) {
+        self.url = url
+        self.name = url.lastPathComponent
+        self.isDirectory = url.hasDirectoryPath
+        self.size = size
+        self.modificationDate = modificationDate
+        self.createdDate = createdDate
+        self.addedDate = addedDate
+        self.lastUsedDate = lastUsedDate
+        self.tags = tags
         self.fileExtension = url.pathExtension
     }
 

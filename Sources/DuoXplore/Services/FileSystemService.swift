@@ -99,6 +99,13 @@ final class FileSystemService {
         pasteboard.setString(url.path, forType: .string)
     }
 
+    /// 覆盖写入 Finder 颜色标签（即 Spotlight 的 kMDItemUserTags 底层 xattr）
+    @discardableResult
+    func writeTags(_ tags: [String], to url: URL) -> Bool {
+        // URLResourceValues.tagNames 是只读属性，写入走 NSURL.setResourceValue
+        return (try? (url as NSURL).setResourceValue(tags, forKey: .tagNamesKey)) != nil
+    }
+
     /// 新建文件夹
     func createFolder(at url: URL, name: String) throws -> URL {
         let newURL = url.appendingPathComponent(name)

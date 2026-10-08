@@ -6,6 +6,7 @@ struct FileListView: View {
     @Binding var files: [FileItem]
     @Binding var sortOption: SortOption
     @Binding var sortDirection: SortDirection
+    @Binding var groupDimension: GroupDimension
     @Binding var selectedURLs: Set<URL>
     @Binding var clipboardURLs: [URL]
     @Binding var clipboardIsCut: Bool
@@ -72,7 +73,7 @@ struct FileListView: View {
 
             // 文件列表（空文件夹也保持表格挂载：接收拖放、安装键盘监听、复用空白区右键菜单）
             FileListTableView(
-                files: sortedFiles,
+                rows: displayRows,
                 selectedURLs: $selectedURLs,
                 cutURLs: cutURLs,
                 renameTarget: renameTarget,
@@ -94,7 +95,10 @@ struct FileListView: View {
                 onRefresh: onRefresh,
                 menuItems: menuItems
             )
-            .onAppear { installKeyboardMonitor() }
+            .onAppear {
+                installKeyboardMonitor()
+                registerMenuProvider?(menuItems)
+            }
             .onDisappear { removeKeyboardMonitor() }
             .overlay {
                 if files.isEmpty {
@@ -116,33 +120,19 @@ struct FileListView: View {
         }
     }
 
-    // MARK: - 排序
+    // MARK: - 排序与分组
 
-    private var sortedFiles: [FileItem] {
-        let dirs = files.filter(\.isDirectory)
-        let nonDirs = files.filter { !$0.isDirectory }
-        let sortedDirs: [FileItem]
-        let sortedFiles: [FileItem]
+    /// 搜索结果与标签模式不分组（Spotlight 结果属性不全），强制平铺
+    private var effectiveDimension: GroupDimension {
+        (isSearching || isTagFilterActive) ? .none : groupDimension
+    }
 
-        switch sortOption {
-        case .name:
-            sortedDirs = dirs.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-            sortedFiles = nonDirs.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-        case .size:
-            sortedDirs = dirs
-            sortedFiles = nonDirs.sorted { ($0.size ?? 0) < ($1.size ?? 0) }
-        case .kind:
-            sortedDirs = dirs.sorted { $0.fileExtension.localizedStandardCompare($1.fileExtension) == .orderedAscending }
-            sortedFiles = nonDirs.sorted { $0.fileExtension.localizedStandardCompare($1.fileExtension) == .orderedAscending }
-        case .date:
-            sortedDirs = dirs.sorted { ($0.modificationDate ?? .distantPast) < ($1.modificationDate ?? .distantPast) }
-            sortedFiles = nonDirs.sorted { ($0.modificationDate ?? .distantPast) < ($1.modificationDate ?? .distantPast) }
-        }
+    private var displayGroups: [FileGroup] {
+        GroupingService.group(files, by: effectiveDimension, sortOption: sortOption, sortDirection: sortDirection)
+    }
 
-        let result = sortDirection == .ascending
-            ? (sortedDirs + sortedFiles)
-            : (Array(sortedDirs.reversed()) + Array(sortedFiles.reversed()))
-        return result
+    private var displayRows: [FileListRow] {
+        FileListRow.rows(from: displayGroups, grouped: effectiveDimension != .none)
     }
 
     // MARK: - 键盘事件监控
@@ -299,6 +289,18 @@ struct FileListView: View {
         onRefresh()
     }
 
+    /// 「分组方式」子菜单（空白区右键菜单与工具栏共用同一数据源）
+    private var groupByMenuItem: FileMenuItem {
+        FileMenuItem("分组方式", subItems: GroupDimension.allCases.map { dimension in
+            FileMenuItem(dimension.rawValue, state: dimension == effectiveDimension ? .on : .off) {
+                groupDimension = dimension
+            }
+        }) { }
+    }
+
+    /// 把菜单条目构建器登记给工具栏（••• 按钮与右键菜单同源）
+    let registerMenuProvider: ((@escaping (FileItem?) -> [FileMenuItem]) -> Void)?
+
     /// 右键菜单条目（file 为 nil 表示空白区域），由 NSTableView 构建 NSMenu
     private func menuItems(for file: FileItem?) -> [FileMenuItem] {
         guard let file else {
@@ -310,6 +312,7 @@ struct FileListView: View {
                 FileMenuItem("在 Finder 中打开") { fsService.openInFinder(currentURL) },
                 .divider,
                 FileMenuItem(showHiddenFiles ? "不显示隐藏项目" : "显示隐藏项目") { showHiddenFiles.toggle() },
+                groupByMenuItem,
             ]
         }
         var items: [FileMenuItem] = [
@@ -352,13 +355,17 @@ struct FileListView: View {
     let keyEquivalent: String?
     let keyEquivalentModifierMask: NSEvent.ModifierFlags
     let enabled: Bool
+    let state: NSControl.StateValue
+    let subItems: [FileMenuItem]
     let action: () -> Void
 
-    init(_ title: String, keyEquivalent: String? = nil, keyEquivalentModifierMask: NSEvent.ModifierFlags = [], enabled: Bool = true, action: @escaping () -> Void) {
+    init(_ title: String, keyEquivalent: String? = nil, keyEquivalentModifierMask: NSEvent.ModifierFlags = [], enabled: Bool = true, state: NSControl.StateValue = .off, subItems: [FileMenuItem] = [], action: @escaping () -> Void) {
         self.title = title
         self.keyEquivalent = keyEquivalent
         self.keyEquivalentModifierMask = keyEquivalentModifierMask
         self.enabled = enabled
+        self.state = state
+        self.subItems = subItems
         self.action = action
     }
 
@@ -369,7 +376,7 @@ struct FileListView: View {
 // MARK: - 原生文件列表（NSTableView：原生选中/多选/双击/行内重命名/右键菜单）
 
 struct FileListTableView: NSViewRepresentable {
-    let files: [FileItem]
+    let rows: [FileListRow]
     @Binding var selectedURLs: Set<URL>
     let cutURLs: Set<URL>
     let renameTarget: URL?
@@ -383,10 +390,11 @@ struct FileListTableView: NSViewRepresentable {
 
     private static let nameCellID = NSUserInterfaceItemIdentifier("FileListNameCell")
     private static let textCellID = NSUserInterfaceItemIdentifier("FileListTextCell")
+    private static let headerCellID = NSUserInterfaceItemIdentifier("FileListHeaderCell")
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
-            files: files,
+            rows: rows,
             cutURLs: cutURLs,
             currentURL: currentURL,
             fsService: fsService,
@@ -437,6 +445,9 @@ struct FileListTableView: NSViewRepresentable {
         table.menuProvider = { [weak coordinator] row, _ in
             coordinator?.menu(forRow: row)
         }
+        table.rowIsSelectable = { [weak coordinator] row in
+            coordinator?.file(at: row) != nil
+        }
         table.reloadData()
 
         let scrollView = NSScrollView()
@@ -457,13 +468,13 @@ struct FileListTableView: NSViewRepresentable {
         coordinator.currentURL = currentURL
         coordinator.fsService = fsService
 
-        let key = files.map { $0.url.path }.joined(separator: "|")
+        let key = FileListRow.diffKey(rows)
         if key != coordinator.filesKey {
-            coordinator.files = files
+            coordinator.rows = rows
             coordinator.filesKey = key
             coordinator.table?.reloadData()
             // 空文件夹时隐藏行分隔线，占位符更干净
-            coordinator.table?.gridStyleMask = files.isEmpty ? [] : .solidHorizontalGridLineMask
+            coordinator.table?.gridStyleMask = rows.isEmpty ? [] : .solidHorizontalGridLineMask
         }
 
         let cutKey = cutURLs.map(\.path).sorted().joined(separator: "|")
@@ -478,7 +489,7 @@ struct FileListTableView: NSViewRepresentable {
     }
 
     @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSControlTextEditingDelegate {
-        var files: [FileItem]
+        var rows: [FileListRow]
         var cutURLs: Set<URL>
         var currentURL: URL
         var fsService: FileSystemService
@@ -493,11 +504,11 @@ struct FileListTableView: NSViewRepresentable {
         var renameRow: Int?
         var isSyncingSelection = false
 
-        init(files: [FileItem], cutURLs: Set<URL>, currentURL: URL, fsService: FileSystemService,
+        init(rows: [FileListRow], cutURLs: Set<URL>, currentURL: URL, fsService: FileSystemService,
              onOpen: @escaping (FileItem) -> Void, onSelection: @escaping (Set<URL>) -> Void,
              onRenameEnd: @escaping (String, Bool) -> Void, onRefresh: @escaping () -> Void,
              menuItems: @escaping (FileItem?) -> [FileMenuItem]) {
-            self.files = files
+            self.rows = rows
             self.cutURLs = cutURLs
             self.currentURL = currentURL
             self.fsService = fsService
@@ -510,13 +521,34 @@ struct FileListTableView: NSViewRepresentable {
 
         // MARK: 数据源
 
+        func file(at row: Int) -> FileItem? {
+            row >= 0 && row < rows.count ? rows[row].file : nil
+        }
+
         func numberOfRows(in tableView: NSTableView) -> Int {
-            files.count
+            rows.count
+        }
+
+        func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+            // 分组标题行不可选中
+            row < rows.count && rows[row].file != nil
+        }
+
+        /// cmd+A / 范围选择等批量选中也要过滤标题行（shouldSelectRow 不覆盖 selectAll）
+        func tableView(_ tableView: NSTableView, selectionIndexesForProposedSelection proposedSelectionIndexes: IndexSet) -> IndexSet {
+            IndexSet(proposedSelectionIndexes.filter { $0 < rows.count && rows[$0].file != nil })
         }
 
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-            guard row < files.count else { return nil }
-            let file = files[row]
+            guard row < rows.count else { return nil }
+
+            if case .header(let title, let count) = rows[row] {
+                let cell = tableView.makeView(withIdentifier: FileListTableView.headerCellID, owner: nil)
+                    as? NSTableCellView ?? Self.makeHeaderCell()
+                cell.textField?.stringValue = "\(title) · \(count) 项"
+                return cell
+            }
+            guard let file = rows[row].file else { return nil }
 
             switch tableColumn?.identifier.rawValue {
             case "name":
@@ -580,6 +612,24 @@ struct FileListTableView: NSViewRepresentable {
             return cell
         }
 
+        private static func makeHeaderCell() -> NSTableCellView {
+            let cell = NSTableCellView()
+            cell.identifier = headerCellID
+            let textField = NSTextField(labelWithString: "")
+            textField.translatesAutoresizingMaskIntoConstraints = false
+            textField.font = .systemFont(ofSize: 11, weight: .semibold)
+            textField.textColor = .secondaryLabelColor
+            textField.lineBreakMode = .byTruncatingTail
+            cell.addSubview(textField)
+            cell.textField = textField
+            NSLayoutConstraint.activate([
+                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                textField.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor),
+            ])
+            return cell
+        }
+
         private static func makeTextCell() -> NSTableCellView {
             let cell = NSTableCellView()
             cell.identifier = textCellID
@@ -602,15 +652,13 @@ struct FileListTableView: NSViewRepresentable {
 
         private var currentSelection: Set<URL> {
             guard let table else { return [] }
-            return Set(table.selectedRowIndexes.compactMap { row in
-                row < files.count ? files[row].url : nil
-            })
+            return Set(table.selectedRowIndexes.compactMap { file(at: $0)?.url })
         }
 
         func syncSelection(to urls: Set<URL>) {
             guard let table, currentSelection != urls else { return }
-            let indexes = IndexSet(files.enumerated().compactMap {
-                urls.contains($0.element.url) ? $0.offset : nil
+            let indexes = IndexSet(rows.indices.filter { offset in
+                rows[offset].file.map { urls.contains($0.url) } == true
             })
             isSyncingSelection = true
             table.selectRowIndexes(indexes, byExtendingSelection: false)
@@ -625,18 +673,18 @@ struct FileListTableView: NSViewRepresentable {
         // MARK: 双击打开
 
         @objc func doubleClicked(_ sender: NSTableView) {
-            let row = sender.clickedRow
-            guard row >= 0, row < files.count else { return }
-            onOpen(files[row])
+            guard let file = file(at: sender.clickedRow) else { return }
+            onOpen(file)
         }
 
         // MARK: 剪切态半透明
 
         func refreshCutAppearance() {
             guard let table else { return }
-            for row in 0..<min(table.numberOfRows, files.count) {
+            for row in 0..<min(table.numberOfRows, rows.count) {
+                guard let file = rows[row].file else { continue }
                 let cell = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? NSTableCellView
-                cell?.alphaValue = cutURLs.contains(files[row].url) ? 0.45 : 1
+                cell?.alphaValue = cutURLs.contains(file.url) ? 0.45 : 1
             }
         }
 
@@ -645,7 +693,7 @@ struct FileListTableView: NSViewRepresentable {
         func syncRename(_ target: URL?) {
             guard let table else { return }
             let row: Int? = target.flatMap { target in
-                files.firstIndex { $0.url == target }
+                rows.firstIndex { $0.file?.url == target }
             }
             guard row != renameRow else { return }
             renameRow = row
@@ -673,7 +721,7 @@ struct FileListTableView: NSViewRepresentable {
 
         // 拖出行：为行提供 URL writer 以发起拖拽；数据由 FileTable.beginDraggingSession 立即写入粘贴板
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
-            row >= 0 && row < files.count ? files[row].url as NSURL : nil
+            file(at: row).map { $0.url as NSURL }
         }
 
         private func draggedFileURLs(from info: NSDraggingInfo) -> [URL]? {
@@ -689,9 +737,9 @@ struct FileListTableView: NSViewRepresentable {
             guard let urls = draggedFileURLs(from: info), !urls.isEmpty else { return nil }
             let destination: URL
             let folderRow: Int?
-            if operation == .on, row >= 0, row < files.count,
-               files[row].isDirectory, !urls.contains(files[row].url) {
-                destination = files[row].url
+            if operation == .on, let hovered = file(at: row),
+               hovered.isDirectory, !urls.contains(hovered.url) {
+                destination = hovered.url
                 folderRow = row
             } else {
                 destination = currentURL
@@ -728,45 +776,20 @@ struct FileListTableView: NSViewRepresentable {
         // MARK: 右键菜单
 
         func menu(forRow row: Int) -> NSMenu? {
-            let specs = menuItems(row >= 0 && row < files.count ? files[row] : nil)
-            let menu = NSMenu()
-            for spec in specs {
-                if spec.isDivider {
-                    menu.addItem(.separator())
-                } else {
-                    let item = NSMenuItem(
-                        title: spec.title,
-                        action: #selector(menuItemClicked(_:)),
-                        keyEquivalent: spec.keyEquivalent ?? ""
-                    )
-                    item.target = self
-                    item.isEnabled = spec.enabled
-                    item.keyEquivalentModifierMask = spec.keyEquivalentModifierMask
-                    item.representedObject = MenuActionBox(action: spec.action)
-                    menu.addItem(item)
-                }
-            }
-            return menu
-        }
-
-        @objc private func menuItemClicked(_ sender: NSMenuItem) {
-            (sender.representedObject as? MenuActionBox)?.action()
+            // 标题行右键 = 空白区菜单
+            makeNativeMenu(from: menuItems(file(at: row)))
         }
     }
 
-    private final class MenuActionBox {
-        let action: () -> Void
-        init(action: @escaping () -> Void) { self.action = action }
-    }
-
-    /// 右键未选中行时先选中该行（Finder 行为）
+    /// 右键未选中文件行时先选中该行（Finder 行为）；分组标题行不选中
     final class FileTable: NSTableView {
         var menuProvider: ((Int, NSEvent) -> NSMenu?)?
+        var rowIsSelectable: ((Int) -> Bool)?
 
         override func menu(for event: NSEvent) -> NSMenu? {
             let point = convert(event.locationInWindow, from: nil)
             let row = row(at: point)
-            if row >= 0, !selectedRowIndexes.contains(row) {
+            if row >= 0, rowIsSelectable?(row) == true, !selectedRowIndexes.contains(row) {
                 selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
             }
             return menuProvider?(row, event)
