@@ -41,6 +41,7 @@ struct SidebarTagsView: NSViewRepresentable {
         outline.backgroundColor = .clear
         outline.floatsGroupRows = false
         outline.autoresizesOutlineColumn = true
+        outline.indentationPerLevel = 0
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("sidebar"))
         column.resizingMask = .autoresizingMask
@@ -202,7 +203,7 @@ struct SidebarTagsView: NSViewRepresentable {
             cell.addSubview(textField)
             cell.textField = textField
             NSLayoutConstraint.activate([
-                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+                textField.leadingAnchor.constraint(equalTo: cell.leadingAnchor),
                 textField.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
             return cell
