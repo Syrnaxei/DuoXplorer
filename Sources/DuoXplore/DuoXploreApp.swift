@@ -53,6 +53,7 @@ struct AboutView: View {
 struct DuoXploreApp: App {
     @StateObject private var navigationState = NavigationState()
     @StateObject private var appSettings = AppSettingsModel()
+    @StateObject private var pinnedTagQuery = PinnedTagQuery()
     @State private var currentURL = URL(fileURLWithPath: "/Users/\(NSUserName())")
     @State private var files: [FileItem] = []
     @State private var sortOption: SortOption = .name
@@ -162,6 +163,8 @@ struct DuoXploreApp: App {
                         (name: "用户", url: URL(fileURLWithPath: "/Users")),
                         (name: "Macintosh HD", url: URL(fileURLWithPath: "/")),
                     ],
+                    pinnedTag: FinderTag.all.first { $0.name == appSettings.pinnedTagName },
+                    pinnedFolders: pinnedTagQuery.folders,
                     selectedTag: activeTag,
                     onSelect: { url in
                         navigationState.push(currentLocation)
@@ -201,7 +204,11 @@ struct DuoXploreApp: App {
                 NSApp.setActivationPolicy(.regular)
                 NSApp.activate(ignoringOtherApps: true)
                 requestFileAccessAtLaunch()
+                pinnedTagQuery.update(tagName: appSettings.pinnedTagName)
                 print("[DuoXplore] 窗口已显示")
+            }
+            .onChange(of: appSettings.pinnedTagName) { _, newValue in
+                pinnedTagQuery.update(tagName: newValue)
             }
         }
         .defaultSize(width: 1100, height: 700)

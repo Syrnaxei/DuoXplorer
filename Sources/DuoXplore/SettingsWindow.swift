@@ -6,6 +6,8 @@ import SwiftUI
 @MainActor
 final class AppSettingsModel: ObservableObject {
     @Published var showHiddenFiles = false
+    /// 置顶标签名（FinderTag.all 之一）；nil = 未设置，侧栏不显示置顶标签分区
+    @Published var pinnedTagName: String?
 }
 
 // MARK: - 原生 AppKit 设置窗口（仿访达设置：工具栏标签切换）
@@ -72,6 +74,10 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         showHiddenCheckbox?.state = appSettings.showHiddenFiles ? .on : .off
+        let index = appSettings.pinnedTagName
+            .flatMap { name in FinderTag.all.firstIndex { $0.name == name } }
+            .map { $0 + 1 } ?? 0
+        pinnedTagPopup?.selectItem(at: index)
     }
 
     // MARK: 标签切换
@@ -81,9 +87,11 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         let content: NSView
         var pinAllEdges = false
         switch tab {
-        case .general, .tags, .sidebar:
+        case .general, .tags:
             content = Self.placeholderView()
             pinAllEdges = true
+        case .sidebar:
+            content = sidebarView()
         case .shortcuts:
             content = NSHostingView(rootView: ShortcutSettingsView())
         case .advanced:
@@ -128,6 +136,41 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         return stack
+    }
+
+    // MARK: 边栏 tab
+
+    private var pinnedTagPopup: NSPopUpButton?
+
+    private func sidebarView() -> NSView {
+        let label = NSTextField(labelWithString: "置顶标签：")
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        popup.menu?.addItem(withTitle: "无", action: nil, keyEquivalent: "")
+        for tag in FinderTag.all {
+            let item = NSMenuItem(title: tag.name, action: nil, keyEquivalent: "")
+            item.image = Self.swatch(tag.color)
+            popup.menu?.addItem(item)
+        }
+        popup.target = self
+        popup.action = #selector(pinnedTagChanged(_:))
+        pinnedTagPopup = popup
+        let stack = NSStackView(views: [label, popup])
+        stack.alignment = .leading
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        return stack
+    }
+
+    @objc private func pinnedTagChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem
+        appSettings.pinnedTagName = index == 0 ? nil : FinderTag.all[index - 1].name
+    }
+
+    private static func swatch(_ color: NSColor) -> NSImage {
+        NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
     }
 
     @objc private func toggleShowHidden(_ sender: NSButton) {
