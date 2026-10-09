@@ -131,23 +131,32 @@ struct MainContentView: View {
             }
 
             ToolbarItem(placement: .primaryAction) {
-                ToolbarShareButton(isEnabled: !selectedURLs.isEmpty) {
-                    selectedFiles.map(\.url)
+                ShareLink(items: selectedFiles.map(\.url)) {
+                    Image(systemName: "square.and.arrow.up")
                 }
+                .disabled(selectedURLs.isEmpty)
+                .help("分享")
                 .padding(.horizontal, 4)
             }
 
             ToolbarItem(placement: .primaryAction) {
-                ToolbarMenuButton(symbol: "tag", helpText: "标签", isEnabled: !selectedURLs.isEmpty) {
-                    tagMenuItems()
+                Menu {
+                    ToolbarMenuItems(specs: tagMenuItems())
+                } label: {
+                    Image(systemName: "tag")
                 }
+                .disabled(selectedURLs.isEmpty)
+                .help("标签")
                 .padding(.horizontal, 4)
             }
 
             ToolbarItem(placement: .primaryAction) {
-                ToolbarMenuButton(symbol: "ellipsis.circle", helpText: "更多", isEnabled: true) {
-                    listMenuProvider?(selectedFiles.first) ?? []
+                Menu {
+                    ToolbarMenuItems(specs: listMenuProvider?(selectedFiles.first) ?? [])
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
+                .help("更多")
                 .padding(.horizontal, 4)
             }
 

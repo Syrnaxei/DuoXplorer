@@ -44,86 +44,50 @@ final class MenuActionBox {
     return menu
 }
 
-// MARK: - 工具栏弹出菜单按钮（••• / 编辑标签）
+// MARK: - FileMenuItem → SwiftUI Menu 内容（工具栏标签/••• 按钮，与分组方式同款 hover）
 
-struct ToolbarMenuButton: NSViewRepresentable {
-    let symbol: String
-    let helpText: String
-    let isEnabled: Bool
-    let menuProvider: () -> [FileMenuItem]
+/// 递归转换：勾选态用 Label(checkmark)，子菜单嵌套 Menu，键位映射 keyboardShortcut
+@MainActor
+struct ToolbarMenuItems: View {
+    let specs: [FileMenuItem]
 
-    func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(image: Self.icon(symbol), target: context.coordinator, action: #selector(Coordinator.clicked))
-        button.isBordered = false
-        button.toolTip = helpText
-        button.setAccessibilityIdentifier(helpText)
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) {
-        button.isEnabled = isEnabled
-        button.contentTintColor = isEnabled ? nil : .disabledControlTextColor
-        context.coordinator.owner = self
-    }
-
-    private static func icon(_ name: String) -> NSImage {
-        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage()
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-        return image.withSymbolConfiguration(config) ?? image
-    }
-
-    @MainActor final class Coordinator: NSObject {
-        var owner: ToolbarMenuButton
-        init(owner: ToolbarMenuButton) { self.owner = owner }
-
-        @objc func clicked(_ sender: NSButton) {
-            guard owner.isEnabled else { return }
-            let menu = makeNativeMenu(from: owner.menuProvider())
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 4), in: sender)
+    var body: some View {
+        ForEach(Array(specs.enumerated()), id: \.offset) { _, spec in
+            if spec.isDivider {
+                Divider()
+            } else if !spec.subItems.isEmpty {
+                Menu(spec.title) {
+                    ToolbarMenuItems(specs: spec.subItems)
+                }
+            } else {
+                let button = Button {
+                    spec.action()
+                } label: {
+                    if spec.state == .on {
+                        Label(spec.title, systemImage: "checkmark")
+                    } else {
+                        Text(spec.title)
+                    }
+                }
+                .disabled(!spec.enabled)
+                if let shortcut = Self.shortcut(of: spec) {
+                    button.keyboardShortcut(shortcut)
+                } else {
+                    button
+                }
+            }
         }
     }
-}
 
-// MARK: - 工具栏分享按钮（NSSharingServicePicker）
-
-struct ToolbarShareButton: NSViewRepresentable {
-    let isEnabled: Bool
-    let itemsProvider: () -> [Any]
-
-    func makeCoordinator() -> Coordinator { Coordinator(owner: self) }
-
-    func makeNSView(context: Context) -> NSButton {
-        let button = NSButton(image: Self.icon(), target: context.coordinator, action: #selector(Coordinator.clicked))
-        button.isBordered = false
-        button.toolTip = "分享"
-        button.setAccessibilityIdentifier("分享")
-        return button
-    }
-
-    func updateNSView(_ button: NSButton, context: Context) {
-        button.isEnabled = isEnabled
-        button.contentTintColor = isEnabled ? nil : .disabledControlTextColor
-        context.coordinator.owner = self
-    }
-
-    private static func icon() -> NSImage {
-        let image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "分享") ?? NSImage()
-        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .medium)
-        return image.withSymbolConfiguration(config) ?? image
-    }
-
-    @MainActor final class Coordinator: NSObject {
-        var owner: ToolbarShareButton
-        init(owner: ToolbarShareButton) { self.owner = owner }
-
-        @objc func clicked(_ sender: NSButton) {
-            guard owner.isEnabled else { return }
-            let items = owner.itemsProvider()
-            guard !items.isEmpty else { return }
-            NSSharingServicePicker(items: items).show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
-        }
+    private static func shortcut(of spec: FileMenuItem) -> KeyboardShortcut? {
+        guard let key = spec.keyEquivalent, let ch = key.first else { return nil }
+        var mods = EventModifiers()
+        let mask = spec.keyEquivalentModifierMask
+        if mask.contains(.command) { mods.insert(.command) }
+        if mask.contains(.option) { mods.insert(.option) }
+        if mask.contains(.control) { mods.insert(.control) }
+        if mask.contains(.shift) { mods.insert(.shift) }
+        return KeyboardShortcut(KeyEquivalent(ch), modifiers: mods)
     }
 }
 
