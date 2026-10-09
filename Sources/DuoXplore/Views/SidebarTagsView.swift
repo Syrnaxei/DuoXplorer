@@ -1,15 +1,21 @@
 import SwiftUI
 import AppKit
 
-/// 侧边栏条目：常用位置 / 分组标题 / 颜色标签
-enum SidebarEntry {
+/// 侧边栏条目：分组头（可展开收起）/ 常用位置 / 颜色标签
+enum SidebarEntry: Hashable {
+    case favoritesGroup
+    case tagsGroup
     case folder(name: String, url: URL)
-    case group(String)
     case tag(FinderTag)
 
-    var isGroup: Bool {
-        if case .group = self { return true }
-        return false
+    var isGroup: Bool { self == .favoritesGroup || self == .tagsGroup }
+
+    var groupTitle: String? {
+        switch self {
+        case .favoritesGroup: return "个人收藏"
+        case .tagsGroup: return "标签"
+        case .folder, .tag: return nil
+        }
     }
 }
 
@@ -51,6 +57,8 @@ struct SidebarTagsView: NSViewRepresentable {
         outline.dataSource = coordinator
         outline.delegate = coordinator
         outline.reloadData()
+        outline.expandItem(SidebarEntry.favoritesGroup, expandChildren: false)
+        outline.expandItem(SidebarEntry.tagsGroup, expandChildren: false)
         coordinator.outlineView = outline
         return scrollView
     }
@@ -76,7 +84,7 @@ struct SidebarTagsView: NSViewRepresentable {
         let matches: Bool
         switch entry {
         case .tag(let tag): matches = tag == selectedTag
-        case .folder, .group: return
+        case .folder, .favoritesGroup, .tagsGroup: return
         }
         if !matches { outline.deselectRow(row) }
     }
@@ -96,22 +104,30 @@ struct SidebarTagsView: NSViewRepresentable {
             self.onTagSelect = onTagSelect
         }
 
-        private var entries: [SidebarEntry] {
-            folders.map { SidebarEntry.folder(name: $0.name, url: $0.url) }
-                + [.group("标签")]
-                + FinderTag.all.map(SidebarEntry.tag)
+        private let topEntries: [SidebarEntry] = [.favoritesGroup, .tagsGroup]
+
+        private func children(of entry: SidebarEntry) -> [SidebarEntry] {
+            switch entry {
+            case .favoritesGroup: return folders.map { SidebarEntry.folder(name: $0.name, url: $0.url) }
+            case .tagsGroup: return FinderTag.all.map(SidebarEntry.tag)
+            case .folder, .tag: return []
+            }
         }
 
         // MARK: 数据源
 
         func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-            item == nil ? entries.count : 0
+            guard let entry = item as? SidebarEntry else { return topEntries.count }
+            return children(of: entry).count
         }
 
-        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { false }
+        func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+            (item as? SidebarEntry)?.isGroup ?? false
+        }
 
         func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-            entries[index]
+            guard let entry = item as? SidebarEntry else { return topEntries[index] }
+            return children(of: entry)[index]
         }
 
         func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
@@ -136,10 +152,10 @@ struct SidebarTagsView: NSViewRepresentable {
                 cell.textField?.stringValue = name
                 cell.imageView?.image = NSWorkspace.shared.icon(forFile: url.path)
                 return cell
-            case .group(let title):
+            case .favoritesGroup, .tagsGroup:
                 let cell = outlineView.makeView(withIdentifier: SidebarTagsView.groupCellID, owner: nil) as? NSTableCellView
                     ?? makeGroupCell()
-                cell.textField?.stringValue = title
+                cell.textField?.stringValue = entry.groupTitle ?? ""
                 return cell
             case .tag(let tag):
                 let cell = outlineView.makeView(withIdentifier: SidebarTagsView.tagCellID, owner: nil) as? TagCellView
@@ -200,7 +216,7 @@ struct SidebarTagsView: NSViewRepresentable {
             switch entry {
             case .folder(_, let url): onSelect?(url)
             case .tag(let tag): onTagSelect?(tag)
-            case .group: break
+            case .favoritesGroup, .tagsGroup: break
             }
         }
     }
