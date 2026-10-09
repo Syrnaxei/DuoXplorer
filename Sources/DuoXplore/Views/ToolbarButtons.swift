@@ -8,6 +8,15 @@ final class MenuActionBox {
     init(action: @escaping () -> Void) { self.action = action }
 }
 
+/// 菜单项左侧的色点图（标签菜单、设置窗口置顶标签下拉共用）
+func menuSwatch(_ color: NSColor) -> NSImage {
+    NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
+        color.setFill()
+        NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+        return true
+    }
+}
+
 /// NSMenuItem 的 target 需要常驻对象；单例转发到 representedObject 里的闭包
 @MainActor final class MenuActionRelay: NSObject {
     static let shared = MenuActionRelay()
@@ -34,6 +43,9 @@ final class MenuActionBox {
             item.isEnabled = spec.enabled
             item.state = spec.state
             item.keyEquivalentModifierMask = spec.keyEquivalentModifierMask
+            if let color = spec.color {
+                item.image = menuSwatch(color)
+            }
             if !spec.subItems.isEmpty {
                 item.submenu = makeNativeMenu(from: spec.subItems)
             }
@@ -63,10 +75,14 @@ struct ToolbarMenuItems: View {
                 let button = Button {
                     spec.action()
                 } label: {
-                    if spec.state == .on {
-                        Label(spec.title, systemImage: "checkmark")
-                    } else {
+                    HStack(spacing: 6) {
+                        if let color = spec.color {
+                            Circle().fill(Color(nsColor: color)).frame(width: 10, height: 10)
+                        }
                         Text(spec.title)
+                        if spec.state == .on {
+                            Image(systemName: "checkmark")
+                        }
                     }
                 }
                 .disabled(!spec.enabled)

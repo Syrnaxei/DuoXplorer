@@ -175,12 +175,44 @@ final class FileListRowTests: XCTestCase {
         XCTAssertTrue(rows.allSatisfy { $0.file != nil })
     }
 
-    func testDiffKeyChangesOnGroupingAndSort() {
+    func testRowsDifferOnGroupingAndSort() {
         let files = [item("a"), item("b")]
         let flat = FileListRow.rows(from: [FileGroup(title: "", items: files)], grouped: false)
         let grouped = FileListRow.rows(from: [FileGroup(title: "G", items: files)], grouped: true)
-        XCTAssertNotEqual(FileListRow.diffKey(flat), FileListRow.diffKey(grouped))
-        // 同一组行键稳定
-        XCTAssertEqual(FileListRow.diffKey(flat), FileListRow.diffKey(flat))
+        // FileListTableView 直接用数组相等判断是否 reload
+        XCTAssertNotEqual(flat, grouped)
+        XCTAssertEqual(flat, flat)
+    }
+}
+
+// MARK: - 分组标题行选中过滤（NSTableView 数据源）
+
+@MainActor
+final class FileListHeaderSelectionTests: XCTestCase {
+    private func fileRow(_ name: String) -> FileListRow {
+        .file(FileItem(url: URL(fileURLWithPath: "/tmp/hdr-test/\(name)"),
+                       size: nil, modificationDate: nil))
+    }
+
+    private var coordinator: FileListTableView.Coordinator {
+        FileListTableView.Coordinator(
+            rows: [.header(title: "A", count: 2), fileRow("a1"), fileRow("a2")],
+            cutURLs: [],
+            currentURL: URL(fileURLWithPath: "/tmp/hdr-test"),
+            fsService: FileSystemService(),
+            onOpen: { _ in }, onSelection: { _ in }, onRenameEnd: { _, _ in },
+            onRefresh: {}, menuItems: { _ in [] })
+    }
+
+    func testKeyboardNavigationSkipsHeaderRow() {
+        let c = coordinator
+        XCTAssertFalse(c.tableView(NSTableView(), shouldSelectRow: 0))
+        XCTAssertTrue(c.tableView(NSTableView(), shouldSelectRow: 1))
+    }
+
+    func testBatchSelectionFiltersHeaderRow() {
+        let c = coordinator
+        let result = c.tableView(NSTableView(), selectionIndexesForProposedSelection: IndexSet(integersIn: 0..<3))
+        XCTAssertEqual(result, IndexSet(integersIn: 1..<3))
     }
 }

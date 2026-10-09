@@ -59,16 +59,17 @@ final class PinnedTagQuery: ObservableObject {
         q.start()
     }
 
-    // ponytail: 映射截断到前 500 条防止超大结果集卡 UI，与 SpotlightSearchService 同一上限
+    // ponytail: 映射截断到前 500 个文件夹防止超大结果集卡 UI，与 SpotlightSearchService 同一上限
     private func collect() {
         guard let query else { return }
-        folders = query.results.prefix(500).compactMap { item -> URL? in
+        folders = query.results.compactMap { item -> URL? in
             guard let item = item as? NSMetadataItem,
                   let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
                   (item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String])?
                       .contains("public.folder") == true else { return nil }
             return URL(fileURLWithPath: path, isDirectory: true)
         }
+        .prefix(500)
         .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
     }
 

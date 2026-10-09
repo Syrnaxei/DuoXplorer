@@ -56,9 +56,16 @@ struct MainContentView: View {
             // 状态栏
             statusBar
         }
-        .onChange(of: showHiddenFiles) { loadFiles() }
+        .onChange(of: showHiddenFiles) {
+            // 标签/搜索模式下列表来自 Spotlight，loadFiles() 会用目录内容覆盖结果
+            guard !tagActive, searchText.isEmpty else { return }
+            loadFiles()
+        }
         .onAppear { loadFiles() }
-        .onChange(of: currentURL) { startWatcher() }
+        .onChange(of: currentURL) { _ in
+            // 目录切换的唯一加载入口（面包屑/双击/侧边栏/前进后退都走这里），避免多处手动加载
+            loadFiles()
+        }
         .onChange(of: activeTag) { tag in
             selectedURLs = []
             searchText = ""
@@ -199,7 +206,7 @@ struct MainContentView: View {
         guard !files.isEmpty else { return [] }
         return FinderTag.all.map { tag in
             let common = files.allSatisfy { ($0.tags ?? []).contains(tag.name) }
-            return FileMenuItem(tag.name, state: common ? .on : .off) {
+            return FileMenuItem(tag.name, state: common ? .on : .off, color: tag.color) {
                 toggleTag(tag, on: files)
             }
         }
@@ -291,7 +298,6 @@ struct MainContentView: View {
         case .folder(let url):
             activeTag = nil
             currentURL = url
-            loadFiles()
         }
     }
 
@@ -300,7 +306,6 @@ struct MainContentView: View {
         navigationState.push(currentLocation)
         activeTag = nil
         currentURL = url
-        loadFiles()
     }
 
     /// 标签模式下文件变动（删除/粘贴/拖放）后刷新标签结果，否则刷新目录列表

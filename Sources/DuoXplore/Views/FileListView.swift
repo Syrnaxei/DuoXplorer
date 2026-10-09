@@ -127,6 +127,8 @@ struct FileListView: View {
         (isSearching || isTagFilterActive) ? .none : groupDimension
     }
 
+    // ponytail: 每次 body 求值都全量重算分组+排序（O(n log n)）；万级条目若卡顿，
+    // 再按 (files, effectiveDimension, sortOption, sortDirection) 做输入键缓存
     private var displayGroups: [FileGroup] {
         GroupingService.group(files, by: effectiveDimension, sortOption: sortOption, sortDirection: sortDirection)
     }
@@ -356,15 +358,17 @@ struct FileListView: View {
     let keyEquivalentModifierMask: NSEvent.ModifierFlags
     let enabled: Bool
     let state: NSControl.StateValue
+    let color: NSColor?
     let subItems: [FileMenuItem]
     let action: () -> Void
 
-    init(_ title: String, keyEquivalent: String? = nil, keyEquivalentModifierMask: NSEvent.ModifierFlags = [], enabled: Bool = true, state: NSControl.StateValue = .off, subItems: [FileMenuItem] = [], action: @escaping () -> Void) {
+    init(_ title: String, keyEquivalent: String? = nil, keyEquivalentModifierMask: NSEvent.ModifierFlags = [], enabled: Bool = true, state: NSControl.StateValue = .off, color: NSColor? = nil, subItems: [FileMenuItem] = [], action: @escaping () -> Void) {
         self.title = title
         self.keyEquivalent = keyEquivalent
         self.keyEquivalentModifierMask = keyEquivalentModifierMask
         self.enabled = enabled
         self.state = state
+        self.color = color
         self.subItems = subItems
         self.action = action
     }
@@ -468,19 +472,15 @@ struct FileListTableView: NSViewRepresentable {
         coordinator.currentURL = currentURL
         coordinator.fsService = fsService
 
-        let key = FileListRow.diffKey(rows)
-        if key != coordinator.filesKey {
+        if rows != coordinator.rows {
             coordinator.rows = rows
-            coordinator.filesKey = key
             coordinator.table?.reloadData()
             // 空文件夹时隐藏行分隔线，占位符更干净
             coordinator.table?.gridStyleMask = rows.isEmpty ? [] : .solidHorizontalGridLineMask
         }
 
-        let cutKey = cutURLs.map(\.path).sorted().joined(separator: "|")
-        if cutKey != coordinator.cutKey {
+        if cutURLs != coordinator.cutURLs {
             coordinator.cutURLs = cutURLs
-            coordinator.cutKey = cutKey
             coordinator.refreshCutAppearance()
         }
 
@@ -499,8 +499,6 @@ struct FileListTableView: NSViewRepresentable {
         var onRefresh: () -> Void
         var menuItems: (FileItem?) -> [FileMenuItem]
         weak var table: NSTableView?
-        var filesKey = ""
-        var cutKey = ""
         var renameRow: Int?
         var isSyncingSelection = false
 

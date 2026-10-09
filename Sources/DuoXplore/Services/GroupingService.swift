@@ -40,16 +40,6 @@ enum FileListRow: Equatable {
             [.header(title: group.title, count: group.items.count)] + group.items.map(FileListRow.file)
         }
     }
-
-    /// 视图刷新差异键：标题行含组名与数量，文件行含路径（排序/分组变化会改变键 → 触发 reload）
-    static func diffKey(_ rows: [FileListRow]) -> String {
-        rows.map { row in
-            switch row {
-            case .header(let title, let count): return "H|\(title)|\(count)"
-            case .file(let file): return file.url.path
-            }
-        }.joined(separator: "|")
-    }
 }
 
 /// 纯函数分组逻辑：10 个维度的归类、分桶、组间与组内排序都在这里，不触碰 AppKit

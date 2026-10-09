@@ -5,9 +5,30 @@ import SwiftUI
 
 @MainActor
 final class AppSettingsModel: ObservableObject {
-    @Published var showHiddenFiles = false
+    private enum Keys {
+        static let showHiddenFiles = "showHiddenFiles"
+        static let pinnedTagName = "pinnedTagName"
+    }
+
+    @Published var showHiddenFiles: Bool {
+        didSet { UserDefaults.standard.set(showHiddenFiles, forKey: Keys.showHiddenFiles) }
+    }
     /// 置顶标签名（FinderTag.all 之一）；nil = 未设置，侧栏不显示置顶标签分区
-    @Published var pinnedTagName: String?
+    @Published var pinnedTagName: String? {
+        didSet {
+            if let pinnedTagName {
+                UserDefaults.standard.set(pinnedTagName, forKey: Keys.pinnedTagName)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Keys.pinnedTagName)
+            }
+        }
+    }
+
+    init() {
+        let defaults = UserDefaults.standard
+        showHiddenFiles = defaults.bool(forKey: Keys.showHiddenFiles)
+        pinnedTagName = defaults.string(forKey: Keys.pinnedTagName)
+    }
 }
 
 // MARK: - 原生 AppKit 设置窗口（仿访达设置：工具栏标签切换）
@@ -148,7 +169,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         popup.menu?.addItem(withTitle: "无", action: nil, keyEquivalent: "")
         for tag in FinderTag.all {
             let item = NSMenuItem(title: tag.name, action: nil, keyEquivalent: "")
-            item.image = Self.swatch(tag.color)
+            item.image = menuSwatch(tag.color)
             popup.menu?.addItem(item)
         }
         popup.target = self
@@ -163,14 +184,6 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     @objc private func pinnedTagChanged(_ sender: NSPopUpButton) {
         let index = sender.indexOfSelectedItem
         appSettings.pinnedTagName = index == 0 ? nil : FinderTag.all[index - 1].name
-    }
-
-    private static func swatch(_ color: NSColor) -> NSImage {
-        NSImage(size: NSSize(width: 12, height: 12), flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            return true
-        }
     }
 
     @objc private func toggleShowHidden(_ sender: NSButton) {

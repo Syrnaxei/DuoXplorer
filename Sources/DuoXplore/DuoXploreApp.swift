@@ -71,7 +71,8 @@ struct DuoXploreApp: App {
         return .folder(currentURL)
     }
 
-    /// 应用历史条目（前进/后退）：恢复标签查询或加载目录；栈操作已由 goBack/goForward 完成，不再 push
+    /// 应用历史条目（前进/后退）：恢复标签查询或加载目录；栈操作已由 goBack/goForward 完成，不再 push。
+    /// 只改状态，目录内容由 MainContentView.onChange(of: currentURL) 统一加载
     private func applyLocation(_ location: NavLocation) {
         switch location {
         case .tag(let tag):
@@ -79,7 +80,6 @@ struct DuoXploreApp: App {
         case .folder(let url):
             activeTag = nil
             currentURL = url
-            files = (try? fsService.listDirectory(at: url, showHidden: appSettings.showHiddenFiles)) ?? []
         }
     }
 
@@ -170,7 +170,6 @@ struct DuoXploreApp: App {
                         navigationState.push(currentLocation)
                         activeTag = nil
                         currentURL = url
-                        files = (try? fsService.listDirectory(at: url, showHidden: appSettings.showHiddenFiles)) ?? []
                         selectedURLs = []
                     },
                     onTagSelect: { tag in
