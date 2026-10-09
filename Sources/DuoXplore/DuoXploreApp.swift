@@ -52,6 +52,7 @@ struct AboutView: View {
 @main
 struct DuoXploreApp: App {
     @StateObject private var navigationState = NavigationState()
+    @StateObject private var appSettings = AppSettingsModel()
     @State private var currentURL = URL(fileURLWithPath: "/Users/\(NSUserName())")
     @State private var files: [FileItem] = []
     @State private var sortOption: SortOption = .name
@@ -59,7 +60,6 @@ struct DuoXploreApp: App {
     @State private var selectedURLs: Set<URL> = []
     @State private var clipboardURLs: [URL] = []
     @State private var clipboardIsCut = false
-    @State private var showHiddenFiles = false
     @State private var activeTag: FinderTag?
 
     private let fsService = FileSystemService()
@@ -78,7 +78,7 @@ struct DuoXploreApp: App {
         case .folder(let url):
             activeTag = nil
             currentURL = url
-            files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+            files = (try? fsService.listDirectory(at: url, showHidden: appSettings.showHiddenFiles)) ?? []
         }
     }
 
@@ -94,10 +94,11 @@ struct DuoXploreApp: App {
             clipboardURLs = []
             clipboardIsCut = false
         }
-        files = (try? fsService.listDirectory(at: currentURL, showHidden: showHiddenFiles)) ?? []
+        files = (try? fsService.listDirectory(at: currentURL, showHidden: appSettings.showHiddenFiles)) ?? []
     }
 
     @State private var aboutWindow: NSWindow?
+    @State private var settingsWindowController: SettingsWindowController?
 
     private func showAboutWindow() {
         if let existing = aboutWindow, existing.isVisible {
@@ -117,6 +118,15 @@ struct DuoXploreApp: App {
         window.center()
         window.makeKeyAndOrderFront(nil)
         aboutWindow = window
+    }
+
+    private func showSettingsWindow() {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController(appSettings: appSettings)
+        }
+        settingsWindowController?.showWindow(nil)
+        settingsWindowController?.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     /// 启动时主动触发系统对常用目录的文件访问授权（TCC），
@@ -157,7 +167,7 @@ struct DuoXploreApp: App {
                         navigationState.push(currentLocation)
                         activeTag = nil
                         currentURL = url
-                        files = (try? fsService.listDirectory(at: url, showHidden: showHiddenFiles)) ?? []
+                        files = (try? fsService.listDirectory(at: url, showHidden: appSettings.showHiddenFiles)) ?? []
                         selectedURLs = []
                     },
                     onTagSelect: { tag in
@@ -177,7 +187,7 @@ struct DuoXploreApp: App {
                     selectedURLs: $selectedURLs,
                     clipboardURLs: $clipboardURLs,
                     clipboardIsCut: $clipboardIsCut,
-                    showHiddenFiles: $showHiddenFiles,
+                    showHiddenFiles: $appSettings.showHiddenFiles,
                     activeTag: $activeTag,
                     navigationState: navigationState,
                     fsService: fsService
@@ -220,8 +230,8 @@ struct DuoXploreApp: App {
                 .keyboardShortcut("]", modifiers: .command)
                 .disabled(!navigationState.canGoForward())
 
-                Button(showHiddenFiles ? "隐藏隐藏项目" : "显示隐藏项目") {
-                    showHiddenFiles.toggle()
+                Button(appSettings.showHiddenFiles ? "隐藏隐藏项目" : "显示隐藏项目") {
+                    appSettings.showHiddenFiles.toggle()
                 }
                 .keyboardShortcut(".", modifiers: [.command, .shift])
 
@@ -272,14 +282,16 @@ struct DuoXploreApp: App {
                 Button("移到废纸篓") {
                     let urls = selectedURLs.isEmpty ? [] : Array(selectedURLs)
                     fsService.moveToTrash(urls)
-                    files = (try? fsService.listDirectory(at: currentURL, showHidden: showHiddenFiles)) ?? []
+                    files = (try? fsService.listDirectory(at: currentURL, showHidden: appSettings.showHiddenFiles)) ?? []
                 }
                 .keyboardShortcut(.delete, modifiers: .command)
             }
-        }
-
-        Settings {
-            ShortcutSettingsView()
+            CommandGroup(replacing: .appSettings) {
+                Button("设置…") {
+                    showSettingsWindow()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 
