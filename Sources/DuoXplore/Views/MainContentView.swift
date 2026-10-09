@@ -111,53 +111,45 @@ struct MainContentView: View {
                 .help("向上一层")
             }
 
-            // 右上角功能区：分组方式（分享/标签/菜单按钮在后续切片）
+            // 右上角功能区：分组/分享/标签/更多 紧凑一组，搜索独立成组
             ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    Picker("分组方式", selection: $groupDimension) {
-                        ForEach(GroupDimension.allCases) { dimension in
-                            Text(dimension.rawValue).tag(dimension)
+                HStack(spacing: 4) {
+                    Menu {
+                        Picker("分组方式", selection: $groupDimension) {
+                            ForEach(GroupDimension.allCases) { dimension in
+                                Text(dimension.rawValue).tag(dimension)
+                            }
                         }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+                    } label: {
+                        Image(systemName: "square.grid.2x2")
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                } label: {
-                    Image(systemName: "square.grid.2x2")
-                }
-                // 搜索/标签模式下不分组，与列表行为一致
-                .disabled(tagActive || !searchText.isEmpty)
-                .help("分组方式")
-                .padding(.horizontal, 4)
-            }
+                    // 搜索/标签模式下不分组，与列表行为一致
+                    .disabled(tagActive || !searchText.isEmpty)
+                    .help("分组方式")
 
-            ToolbarItem(placement: .primaryAction) {
-                ShareLink(items: selectedFiles.map(\.url)) {
-                    Image(systemName: "square.and.arrow.up")
-                }
-                .disabled(selectedURLs.isEmpty)
-                .help("分享")
-                .padding(.horizontal, 4)
-            }
+                    ShareLink(items: selectedFiles.map(\.url)) {
+                        Image(systemName: "square.and.arrow.up")
+                    }
+                    .disabled(selectedURLs.isEmpty)
+                    .help("分享")
 
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    ToolbarMenuItems(specs: tagMenuItems())
-                } label: {
-                    Image(systemName: "tag")
-                }
-                .disabled(selectedURLs.isEmpty)
-                .help("标签")
-                .padding(.horizontal, 4)
-            }
+                    Menu {
+                        ToolbarMenuItems(specs: tagMenuItems())
+                    } label: {
+                        Image(systemName: "tag")
+                    }
+                    .disabled(selectedURLs.isEmpty)
+                    .help("标签")
 
-            ToolbarItem(placement: .primaryAction) {
-                Menu {
-                    ToolbarMenuItems(specs: listMenuProvider?(selectedFiles.first) ?? [])
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Menu {
+                        ToolbarMenuItems(specs: listMenuProvider?(selectedFiles.first) ?? [])
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .help("更多")
                 }
-                .help("更多")
-                .padding(.horizontal, 4)
             }
 
             // Finder 式搜索：默认折叠为放大镜，点击展开带放大镜前缀的输入框，左侧 » 收回
