@@ -185,6 +185,78 @@ final class FileListRowTests: XCTestCase {
     }
 }
 
+// MARK: - 行内重命名会话（真实 NSTableView + 字段编辑器）
+
+@MainActor
+final class RenameEditingTests: XCTestCase {
+    private func fileRow(_ name: String) -> FileListRow {
+        .file(FileItem(url: URL(fileURLWithPath: "/tmp/rename-test/\(name)"),
+                       size: nil, modificationDate: nil))
+    }
+
+    /// 复刻 makeNSView 的最小装配：窗口 + FileTable + 协调器
+    private func makeWindow(coordinator: FileListTableView.Coordinator) -> NSWindow {
+        let table = FileListTableView.FileTable()
+        table.rowHeight = 28
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("name"))
+        column.width = 200
+        table.addTableColumn(column)
+        coordinator.table = table
+        table.dataSource = coordinator
+        table.delegate = coordinator
+        table.reloadData()
+
+        let scrollView = NSScrollView()
+        scrollView.documentView = table
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 200),
+            styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = scrollView
+        return window
+    }
+
+    private func keyDown(_ char: String, keyCode: UInt16, in window: NSWindow) {
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: char, charactersIgnoringModifiers: char,
+            isARepeat: false, keyCode: keyCode)!
+        window.sendEvent(event)
+    }
+
+    func testBeginRenameGivesFieldEditorFocusAndAcceptsTyping() {
+        let coordinator = FileListTableView.Coordinator(
+            rows: [fileRow("old.txt")],
+            cutURLs: [],
+            currentURL: URL(fileURLWithPath: "/tmp/rename-test"),
+            fsService: FileSystemService(),
+            onOpen: { _ in }, onSelection: { _ in },
+            onRenameEnd: { _, _, _ in },
+            onRefresh: {}, menuItems: { _ in [] })
+
+        // xctest 进程拿不到 key 窗口，editColumn 必然被拒，正好全程走兜底直编路径
+        let window = makeWindow(coordinator: coordinator)
+        window.orderFrontRegardless()
+        XCTAssertTrue(window.makeFirstResponder(coordinator.table) ?? false)
+
+        coordinator.beginRename(URL(fileURLWithPath: "/tmp/rename-test/old.txt"))
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+
+        // 不变量：编辑会话开着（editColumn 或兜底直编）就必须持有键盘焦点，输入能落字；
+        // 两种路径都开不成时必须干净复位：焦点回到表格、会话关闭，不留游离编辑器吞键盘
+        let table = coordinator.table
+        let editor = table?.currentEditor() ?? coordinator.fallbackTextField?.currentEditor()
+        if let editor {
+            XCTAssertTrue(window.firstResponder === editor)
+            keyDown("a", keyCode: 0, in: window)
+            XCTAssertEqual(editor.string, "a")
+        } else {
+            XCTAssertTrue(window.firstResponder === table, "编辑未开启时焦点必须回到表格，不能留在游离编辑器上")
+            XCTAssertFalse(coordinator.isEditingRename)
+        }
+    }
+}
+
 // MARK: - 分组标题行选中过滤（NSTableView 数据源）
 
 @MainActor
@@ -200,7 +272,7 @@ final class FileListHeaderSelectionTests: XCTestCase {
             cutURLs: [],
             currentURL: URL(fileURLWithPath: "/tmp/hdr-test"),
             fsService: FileSystemService(),
-            onOpen: { _ in }, onSelection: { _ in }, onRenameEnd: { _, _ in },
+            onOpen: { _ in }, onSelection: { _ in }, onRenameEnd: { _, _, _ in },
             onRefresh: {}, menuItems: { _ in [] })
     }
 

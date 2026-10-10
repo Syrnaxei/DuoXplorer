@@ -18,9 +18,6 @@ struct MainContentView: View {
     @State private var isLoading = false
     @State private var searchText = ""
     @State private var searchExpanded = false
-    @State private var isRenaming = false
-    @State private var renameTarget: URL?
-    @State private var renameText = ""
     @State private var loadError: String?
     @State private var watcherSource: DispatchSourceFileSystemObject?
     @State private var listMenuProvider: ((FileItem?) -> [FileMenuItem])?
@@ -275,9 +272,6 @@ struct MainContentView: View {
                 isTagFilterActive: tagActive,
                 onNavigate: { navigate(to: $0) },
                 fsService: fsService,
-                isRenaming: $isRenaming,
-                renameTarget: $renameTarget,
-                renameText: $renameText,
                 onRefresh: { refresh() },
                 registerMenuProvider: { listMenuProvider = $0 }
             )

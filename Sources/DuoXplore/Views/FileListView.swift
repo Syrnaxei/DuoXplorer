@@ -18,14 +18,14 @@ struct FileListView: View {
     let isTagFilterActive: Bool
     let onNavigate: (URL) -> Void
     let fsService: FileSystemService
-    @Binding var isRenaming: Bool
-    @Binding var renameTarget: URL?
-    @Binding var renameText: String
     let onRefresh: () -> Void
 
     @State private var isCreatingFolder = false
     @State private var newFolderText = "新建文件夹"
     @FocusState private var newFolderFieldFocused: Bool
+    /// 协调器重命名入口的引用容器（makeNSView 时注入）：键盘/菜单直接驱动 AppKit 编辑，
+    /// 不经 SwiftUI 状态中转；用类实例而非 @State 闭包，避免在视图更新期间写状态
+    @State private var renameHub = RenameHub()
 
     private var cutURLs: Set<URL> {
         clipboardIsCut ? Set(clipboardURLs) : []
@@ -76,7 +76,6 @@ struct FileListView: View {
                 rows: displayRows,
                 selectedURLs: $selectedURLs,
                 cutURLs: cutURLs,
-                renameTarget: renameTarget,
                 currentURL: currentURL,
                 fsService: fsService,
                 onOpen: { file in
@@ -86,14 +85,13 @@ struct FileListView: View {
                 onSelection: { urls in
                     selectedURLs = urls
                 },
-                onRenameEnd: { newName, canceled in
-                    if canceled { cancelRename() } else {
-                        renameText = newName
-                        commitRename()
-                    }
+                onRenameEnd: { target, newName, canceled in
+                    guard !canceled else { return }
+                    commitRename(target: target, text: newName)
                 },
                 onRefresh: onRefresh,
-                menuItems: menuItems
+                menuItems: menuItems,
+                renameHub: renameHub
             )
             .onAppear {
                 installKeyboardMonitor()
@@ -142,15 +140,18 @@ struct FileListView: View {
     @State private var keyboardMonitor: Any?
 
     private func handleKey(event: NSEvent) -> NSEvent? {
-        // 仅在主窗口内劫持（设置等辅助窗口聚焦时放行，避免后台误触发）；
-        // 焦点在任何文本输入框（路径编辑/搜索/重命名/新建文件夹）时交给输入框原生处理；
+        guard let window = event.window else { return event }
+        // 焦点在任何文本编辑器（重命名/搜索/新建文件夹/路径）时交给输入框处理，
+        // 仅搜索框专属键位与会被菜单键位抢占的 ⌘C/⌘X/⌘V/⌘⌫ 等需这里接管（见 handleEditingKey）；
         // 方向键与扩展选中全部交给 NSTableView 原生处理，这里只劫持内置的表格动作
-        guard !isRenaming, !isCreatingFolder,
-              let window = NSApp.mainWindow,
-              event.window === window else { return event }
         if let editor = window.firstResponder as? NSTextView {
-            return handleTextEditingKey(event: event, editor: editor, window: window)
+            return handleEditingKey(event: event, editor: editor, window: window)
         }
+        // 表格动作只在主列表窗口生效：设置/关于等辅助窗口聚焦时（它们也是 mainWindow），
+        // 不得在后台对主列表误触发重命名/新建文件夹等操作
+        guard window === renameHub.listWindow?() else { return event }
+        // 新建文件夹行刚出现、焦点尚未落进输入框的短暂窗口内不放行表格动作
+        guard !isCreatingFolder else { return event }
 
         // 空文件夹也允许返回上级；根目录不能再向上（deletingLastPathComponent 会产生 /..）；
         // 标签模式下 currentURL 是进入标签前的残留目录，向上一层无意义
@@ -173,7 +174,7 @@ struct FileListView: View {
         }
         if ShortcutAction.renameItem.defaultCombo.matches(event) {
             guard let url = selectedURLs.first, selectedURLs.count == 1 else { return event }
-            startRename(url)
+            renameHub.begin?(url)
             return nil
         }
         if ShortcutAction.newFolder.defaultCombo.matches(event) {
@@ -193,23 +194,44 @@ struct FileListView: View {
         keyboardMonitor = nil
     }
 
-    /// 搜索框聚焦时接管两个 Finder 行为：Esc 退出搜索并把焦点还给列表，
-    /// ↓ 跳进结果列表选中首项；其余按键（含 IME 组合中）全部交给输入框
-    private func handleTextEditingKey(event: NSEvent, editor: NSTextView, window: NSWindow) -> NSEvent? {
-        guard editor.delegate is NSSearchField, !editor.hasMarkedText() else { return event }
-        switch event.keyCode {
-        case 53: // Esc
-            searchText = ""
-            makeFileTableFirstResponder(in: window)
-            return nil
-        case 125: // ↓
-            guard let first = files.first else { return event }
-            selectedURLs = [first.url]
-            makeFileTableFirstResponder(in: window)
-            return nil
-        default:
-            return event
+    /// 文本编辑器聚焦时的按键处理：
+    /// 1. 搜索框专属：Esc 清空搜索并把焦点还给列表，↓ 跳进结果选中首项；
+    /// 2. 任意编辑器（重命名/搜索/新建文件夹/路径）共同的问题：菜单栏 ⌘C/⌘X/⌘V 是带
+    ///    显式 action 的文件操作，菜单键位匹配先于字段编辑器拿到按键（文本复制被抢成
+    ///    复制文件），这里直接派发给编辑器并吞掉；⌘A/⌘⌫/⌘⌦ 同理——⌘⌫ 若不拦截会被
+    ///    「移到废纸篓」菜单抢走，编辑到一半的文件直接进废纸篓；
+    /// 其余按键（含 IME 组合中）全部交给输入框原生处理
+    private func handleEditingKey(event: NSEvent, editor: NSTextView, window: NSWindow) -> NSEvent? {
+        if editor.delegate is NSSearchField, !editor.hasMarkedText() {
+            switch event.keyCode {
+            case 53: // Esc
+                searchText = ""
+                makeFileTableFirstResponder(in: window)
+                return nil
+            case 125: // ↓
+                if let first = files.first {
+                    selectedURLs = [first.url]
+                    makeFileTableFirstResponder(in: window)
+                    return nil
+                }
+            default:
+                break
+            }
         }
+        let flags = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.numericPad, .function, .capsLock])
+        guard flags == .command, !editor.hasMarkedText() else { return event }
+        switch event.charactersIgnoringModifiers {
+        case "c": editor.copy(nil)
+        case "x": editor.cut(nil)
+        case "v": editor.paste(nil)
+        case "a": editor.selectAll(nil)
+        case "\u{7F}": editor.deleteToBeginningOfLine(nil)
+        case "\u{F728}": editor.deleteToEndOfLine(nil)
+        default: return event
+        }
+        return nil
     }
 
     private func makeFileTableFirstResponder(in window: NSWindow) {
@@ -229,34 +251,22 @@ struct FileListView: View {
 
     // MARK: - 重命名
 
-    /// 开始重命名（从右键菜单或键盘触发）
-    func startRename(_ url: URL) {
-        renameTarget = url
-        renameText = url.lastPathComponent
-        isRenaming = true
-    }
-
-    private func commitRename() {
-        guard let target = renameTarget,
-              !renameText.trimmingCharacters(in: .whitespaces).isEmpty,
-              fsService.isValidFileName(renameText),
-              renameText != target.lastPathComponent else {
-            cancelRename()
+    /// 提交重命名（编辑结束时由协调器回调）；失败弹窗报错并刷新，
+    /// 刷新同时把输入框残留文本复位为磁盘真实名称
+    private func commitRename(target: URL, text: String) {
+        let newName = text.trimmingCharacters(in: .whitespaces)
+        guard !newName.isEmpty,
+              fsService.isValidFileName(newName),
+              newName != target.lastPathComponent else {
+            if newName != target.lastPathComponent { onRefresh() }
             return
         }
         do {
-            _ = try fsService.renameItem(at: target, to: renameText.trimmingCharacters(in: .whitespaces))
-            onRefresh()
+            _ = try fsService.renameItem(at: target, to: newName)
         } catch {
-            print("重命名失败: \(error)")
+            NSAlert(error: error as NSError).runModal()
         }
-        cancelRename()
-    }
-
-    private func cancelRename() {
-        isRenaming = false
-        renameTarget = nil
-        renameText = ""
+        onRefresh()
     }
 
     func startCreateFolder() {
@@ -331,7 +341,7 @@ struct FileListView: View {
                 clipboardIsCut = true
             },
             .divider,
-            FileMenuItem("重命名") { startRename(file.url) },
+            FileMenuItem("重命名") { renameHub.begin?(file.url) },
         ]
         if !file.isDirectory {
             items.append(FileMenuItem("在 Finder 中显示") { fsService.revealInFinder(file.url) })
@@ -379,18 +389,27 @@ struct FileListView: View {
 
 // MARK: - 原生文件列表（NSTableView：原生选中/多选/双击/行内重命名/右键菜单）
 
+/// 协调器注入的引用容器：makeNSView（视图更新期间）只写实例属性，
+/// 不触碰 SwiftUI 状态机，父视图的键盘/菜单闭包经此直调协调器
+@MainActor final class RenameHub {
+    var begin: ((URL) -> Void)?
+    /// 主列表所在窗口：表格快捷键只在它聚焦时生效，辅助窗口（设置/关于）聚焦时放行
+    var listWindow: (() -> NSWindow?)?
+}
+
 struct FileListTableView: NSViewRepresentable {
     let rows: [FileListRow]
     @Binding var selectedURLs: Set<URL>
     let cutURLs: Set<URL>
-    let renameTarget: URL?
     let currentURL: URL
     let fsService: FileSystemService
     let onOpen: (FileItem) -> Void
     let onSelection: (Set<URL>) -> Void
-    let onRenameEnd: (String, Bool) -> Void
+    let onRenameEnd: (URL, String, Bool) -> Void
     let onRefresh: () -> Void
     let menuItems: (FileItem?) -> [FileMenuItem]
+    /// 协调器在 makeNSView 时把 beginRename 写入该容器，父视图的键盘/菜单直接调用
+    let renameHub: RenameHub
 
     private static let nameCellID = NSUserInterfaceItemIdentifier("FileListNameCell")
     private static let textCellID = NSUserInterfaceItemIdentifier("FileListTextCell")
@@ -452,6 +471,12 @@ struct FileListTableView: NSViewRepresentable {
         table.rowIsSelectable = { [weak coordinator] row in
             coordinator?.file(at: row) != nil
         }
+        renameHub.begin = { [weak coordinator] url in
+            coordinator?.beginRename(url)
+        }
+        renameHub.listWindow = { [weak coordinator] in
+            coordinator?.table?.window
+        }
         table.reloadData()
 
         let scrollView = NSScrollView()
@@ -474,9 +499,13 @@ struct FileListTableView: NSViewRepresentable {
 
         if rows != coordinator.rows {
             coordinator.rows = rows
-            coordinator.table?.reloadData()
-            // 空文件夹时隐藏行分隔线，占位符更干净
-            coordinator.table?.gridStyleMask = rows.isEmpty ? [] : .solidHorizontalGridLineMask
+            // 编辑中不重载：reloadData 会打断正在进行的重命名（半截文本被提交）；
+            // rows 已更新为最新，编辑收尾时在 controlTextDidEndEditing 补载
+            if coordinator.isEditingRename {
+                coordinator.pendingReload = true
+            } else {
+                coordinator.reloadTable()
+            }
         }
 
         if cutURLs != coordinator.cutURLs {
@@ -485,7 +514,6 @@ struct FileListTableView: NSViewRepresentable {
         }
 
         coordinator.syncSelection(to: selectedURLs)
-        coordinator.syncRename(renameTarget)
     }
 
     @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSControlTextEditingDelegate {
@@ -495,16 +523,26 @@ struct FileListTableView: NSViewRepresentable {
         var fsService: FileSystemService
         var onOpen: (FileItem) -> Void
         var onSelection: (Set<URL>) -> Void
-        var onRenameEnd: (String, Bool) -> Void
+        var onRenameEnd: (URL, String, Bool) -> Void
         var onRefresh: () -> Void
         var menuItems: (FileItem?) -> [FileMenuItem]
         weak var table: NSTableView?
-        var renameRow: Int?
+        /// 当前编辑中的重命名目标，nil = 无会话。
+        /// 重命名会话完全由本协调器持有并同步驱动，SwiftUI 侧不保存任何中间状态，
+        /// 编辑收尾（controlTextDidEndEditing）时把捕获的目标回传给提交逻辑，
+        /// 不依赖可能被后续操作覆盖的共享状态
+        var editingURL: URL?
+        /// 编辑期间被推迟的列表刷新，收尾后补载
+        var pendingReload = false
+        /// 兜底直编路径（editColumn 被拒时直接编辑 NSTextField）的当前目标
+        var fallbackTextField: NSTextField?
         var isSyncingSelection = false
+
+        var isEditingRename: Bool { editingURL != nil }
 
         init(rows: [FileListRow], cutURLs: Set<URL>, currentURL: URL, fsService: FileSystemService,
              onOpen: @escaping (FileItem) -> Void, onSelection: @escaping (Set<URL>) -> Void,
-             onRenameEnd: @escaping (String, Bool) -> Void, onRefresh: @escaping () -> Void,
+             onRenameEnd: @escaping (URL, String, Bool) -> Void, onRefresh: @escaping () -> Void,
              menuItems: @escaping (FileItem?) -> [FileMenuItem]) {
             self.rows = rows
             self.cutURLs = cutURLs
@@ -686,33 +724,128 @@ struct FileListTableView: NSViewRepresentable {
             }
         }
 
-        // MARK: 行内重命名（原生字段编辑器）
+        // MARK: 行内重命名（原生字段编辑器，会话由协调器全权持有）
 
-        func syncRename(_ target: URL?) {
+        /// 开始重命名：所有触发（键盘 Return / 右键菜单）统一入口。
+        /// 菜单项 action 在菜单跟踪收尾期间同步执行，此时直接 editColumn 会被
+        /// 残余鼠标事件/菜单拆卸打断；延后一轮主队列（跟踪结束、事件排空）再开编辑
+        func beginRename(_ url: URL) {
+            DispatchQueue.main.async { [weak self] in
+                self?.beginEditSession(url)
+            }
+        }
+
+        private func beginEditSession(_ url: URL) {
             guard let table else { return }
-            let row: Int? = target.flatMap { target in
-                rows.firstIndex { $0.file?.url == target }
+            if table.currentEditor() != nil || fallbackTextField != nil {
+                if table.window?.firstResponder === table {
+                    // 焦点已在表格却仍有会话挂着：非常态，放弃重试避免死循环
+                    return
+                }
+                // 上一轮编辑还开着：先收尾（级联用各自捕获的目标提交/取消，互不干扰），
+                // 再延后一轮重试，保证收尾触发的刷新先完成
+                guard table.window?.makeFirstResponder(table) == true else { return }
+                DispatchQueue.main.async { [weak self] in
+                    self?.beginEditSession(url)
+                }
+                return
             }
-            guard row != renameRow else { return }
-            renameRow = row
-            guard let row, row < table.numberOfRows else { return }
-            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-            table.scrollRowToVisible(row)
-            if let cell = table.rowView(atRow: row, makeIfNecessary: true)?.view(atColumn: 0)
-                as? NSTableCellView {
-                cell.textField?.isEditable = true
+            guard rows.contains(where: { $0.file?.url == url }) else { return }
+            // 编辑器要收到按键，窗口必须是 key：从后台/菜单收尾等边角触发时先把窗口拉正
+            if let window = table.window, window !== NSApp.keyWindow {
+                NSApp.activate(ignoringOtherApps: true)
+                window.makeKeyAndOrderFront(nil)
             }
-            DispatchQueue.main.async { [weak table] in
-                table?.editColumn(0, row: row, with: nil, select: true)
+            // editColumn 的前提是表格自己先持有焦点：焦点在游离编辑器/侧边栏等其他 responder
+            // 上时开编辑，会得到「输入框可见却收不到按键」的坏状态，先归位
+            if table.window?.firstResponder !== table {
+                table.window?.makeFirstResponder(table)
             }
+            if let row = rows.firstIndex(where: { $0.file?.url == url }) {
+                table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                table.scrollRowToVisible(row)
+            }
+            // 关键时序：editColumn 不能与 selectRowIndexes 同一轮执行——表格要先完成
+            // 选择的重绘，否则 editColumn 静默失败（实证：重构把两步并到同一轮后编辑器
+            // 再没真正开起来；旧版可用正是靠 updateNSView 与 editColumn 之间隔了一轮主队列）
+            DispatchQueue.main.async { [weak self, weak table] in
+                self?.openEditor(for: url, table: table)
+            }
+        }
+
+        private func openEditor(for url: URL, table: NSTableView?) {
+            guard let table else { return }
+            // 行号重算：延后期间可能发生 reloadData，coordinator.rows 已吸收最新内容
+            guard let row = rows.firstIndex(where: { $0.file?.url == url }) else { return }
+            guard let textField = (table.rowView(atRow: row, makeIfNecessary: true)?
+                .view(atColumn: 0) as? NSTableCellView)?.textField else { return }
+            // isEditable 在 reloadData 复用 cell 时会被 viewFor 重置，必须紧跟 editColumn 设置
+            textField.isEditable = true
+            editingURL = url
+            table.editColumn(0, row: row, with: nil, select: true)
+            if table.currentEditor() == nil {
+                // 兜底：绕开表格编辑机制，直接把 NSTextField 设为 first responder——
+                // 可编辑控件获得焦点即进入原生字段编辑（等效 Tab 聚焦输入框）；
+                // 此路径不经表格发起，收尾靠通知而不是表格委托
+                let took = table.window?.makeFirstResponder(textField) == true
+                if took, textField.currentEditor() != nil {
+                    fallbackTextField = textField
+                    NotificationCenter.default.addObserver(
+                        self, selector: #selector(fallbackEditEnded(_:)),
+                        name: NSControl.textDidEndEditingNotification, object: textField)
+                    return
+                }
+                editingURL = nil
+                textField.isEditable = false
+                table.window?.makeFirstResponder(table)
+                return
+            }
+            let editor = table.currentEditor()
+            if let editor, table.window?.firstResponder !== editor {
+                // 实证过 editColumn 可留下「编辑器在、焦点却不在编辑器上」的坏状态（输入框
+                // 可见却收不到任何按键）——焦点必须显式落在编辑器上
+                table.window?.makeFirstResponder(editor)
+                if table.currentEditor() == nil {
+                    editingURL = nil
+                    textField.isEditable = false
+                }
+            }
+        }
+
+        /// 兜底直编路径的收尾（ textField 直接编辑，不经表格委托）
+        @objc private func fallbackEditEnded(_ note: Notification) {
+            guard let textField = note.object as? NSTextField, textField === fallbackTextField else { return }
+            NotificationCenter.default.removeObserver(
+                self, name: NSControl.textDidEndEditingNotification, object: textField)
+            fallbackTextField = nil
+            finishEditing(textField, userInfo: note.userInfo)
         }
 
         func controlTextDidEndEditing(_ obj: Notification) {
             guard let textField = obj.object as? NSTextField else { return }
+            finishEditing(textField, userInfo: obj.userInfo)
+        }
+
+        private func finishEditing(_ textField: NSTextField, userInfo: [AnyHashable: Any]?) {
             textField.isEditable = false
-            renameRow = nil
-            let movement = (obj.userInfo?["NSTextMovement"] as? Int).flatMap(NSTextMovement.init(rawValue:))
-            onRenameEnd(textField.stringValue, movement == .cancel)
+            let target = editingURL
+            editingURL = nil
+            let movement = (userInfo?["NSTextMovement"] as? Int).flatMap(NSTextMovement.init(rawValue:))
+            if let target {
+                onRenameEnd(target, textField.stringValue, movement == .cancel)
+            }
+            // 编辑期间推迟的列表刷新在此补上（rows 已是最新，加载即可见）
+            if pendingReload {
+                pendingReload = false
+                reloadTable()
+            }
+        }
+
+        func reloadTable() {
+            guard let table else { return }
+            table.reloadData()
+            // 空文件夹时隐藏行分隔线，占位符更干净
+            table.gridStyleMask = rows.isEmpty ? [] : .solidHorizontalGridLineMask
         }
 
         // MARK: 拖放
