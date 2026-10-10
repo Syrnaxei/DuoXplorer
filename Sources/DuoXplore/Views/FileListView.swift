@@ -773,6 +773,13 @@ struct FileListTableView: NSViewRepresentable {
             }
         }
 
+        /// 编辑态外观走原生圆角边框（自带白底与焦点环），收尾还原成无边框标签；
+        /// 只改外观属性，会话算法（editColumn / 兜底直编）不动
+        private func setEditingBezel(_ textField: NSTextField, on: Bool) {
+            textField.bezelStyle = .roundedBezel
+            textField.isBezeled = on
+        }
+
         private func openEditor(for url: URL, table: NSTableView?) {
             guard let table else { return }
             // 行号重算：延后期间可能发生 reloadData，coordinator.rows 已吸收最新内容
@@ -781,6 +788,7 @@ struct FileListTableView: NSViewRepresentable {
                 .view(atColumn: 0) as? NSTableCellView)?.textField else { return }
             // isEditable 在 reloadData 复用 cell 时会被 viewFor 重置，必须紧跟 editColumn 设置
             textField.isEditable = true
+            setEditingBezel(textField, on: true)
             editingURL = url
             table.editColumn(0, row: row, with: nil, select: true)
             if table.currentEditor() == nil {
@@ -797,6 +805,7 @@ struct FileListTableView: NSViewRepresentable {
                 }
                 editingURL = nil
                 textField.isEditable = false
+                setEditingBezel(textField, on: false)
                 table.window?.makeFirstResponder(table)
                 return
             }
@@ -808,6 +817,7 @@ struct FileListTableView: NSViewRepresentable {
                 if table.currentEditor() == nil {
                     editingURL = nil
                     textField.isEditable = false
+                    setEditingBezel(textField, on: false)
                 }
             }
         }
@@ -828,6 +838,7 @@ struct FileListTableView: NSViewRepresentable {
 
         private func finishEditing(_ textField: NSTextField, userInfo: [AnyHashable: Any]?) {
             textField.isEditable = false
+            setEditingBezel(textField, on: false)
             let target = editingURL
             editingURL = nil
             let movement = (userInfo?["NSTextMovement"] as? Int).flatMap(NSTextMovement.init(rawValue:))

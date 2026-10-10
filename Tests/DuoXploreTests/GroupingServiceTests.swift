@@ -248,6 +248,8 @@ final class RenameEditingTests: XCTestCase {
         let editor = table?.currentEditor() ?? coordinator.fallbackTextField?.currentEditor()
         if let editor {
             XCTAssertTrue(window.firstResponder === editor)
+            // 编辑会话开着时输入框必须呈现原生边框外观
+            XCTAssertTrue(coordinator.fallbackTextField?.isBezeled == true)
             keyDown("a", keyCode: 0, in: window)
             XCTAssertEqual(editor.string, "a")
         } else {
