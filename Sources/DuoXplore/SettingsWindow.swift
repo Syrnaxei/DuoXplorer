@@ -95,10 +95,6 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     override func showWindow(_ sender: Any?) {
         super.showWindow(sender)
         showHiddenCheckbox?.state = appSettings.showHiddenFiles ? .on : .off
-        let index = appSettings.pinnedTagName
-            .flatMap { name in FinderTag.all.firstIndex { $0.name == name } }
-            .map { $0 + 1 } ?? 0
-        pinnedTagPopup?.selectItem(at: index)
     }
 
     // MARK: 标签切换
@@ -174,6 +170,9 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         }
         popup.target = self
         popup.action = #selector(pinnedTagChanged(_:))
+        popup.selectItem(at: appSettings.pinnedTagName
+            .flatMap { name in FinderTag.all.firstIndex { $0.name == name } }
+            .map { $0 + 1 } ?? 0)
         pinnedTagPopup = popup
         let stack = NSStackView(views: [label, popup])
         stack.alignment = .leading
